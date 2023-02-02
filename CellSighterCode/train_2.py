@@ -26,7 +26,7 @@ def train_epoch(model, dataloader, optimizer, criterion, epoch, writer, device=N
         x = x.to(device=device)
 
         y = batch['label'].to(device=device)
-        optimizer.zero_grad(set_to_none=True)
+        optimizer.zero_grad()
         y_pred = model(x)
         loss = criterion(y_pred, y)
         if i % 100 == 0:
@@ -73,13 +73,13 @@ def define_sampler(crops, hierarchy_match=None):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Arguments')
-    parser.add_argument('--base_path', type=str,
-                        help='configuration_path')
-    args = parser.parse_args()
-
-    writer = SummaryWriter(log_dir=args.base_path)
-    config_path = os.path.join(args.base_path, "config.json")
+    # parser = argparse.ArgumentParser(description='Arguments')
+    # parser.add_argument('--base_path', type=str,
+                        # help='configuration_path')
+    # args = parser.parse_args()
+    base_path = "/Volumes/bpalau/Git/CellSighter/Output"
+    writer = SummaryWriter(log_dir=base_path)
+    config_path = os.path.join(base_path, "config.json")
     with open(config_path) as f:
         config = json.load(f)
     criterion = torch.nn.CrossEntropyLoss()
@@ -125,14 +125,14 @@ if __name__ == "__main__":
     for i in range(config["epoch_max"]):
         train_epoch(model, train_loader, optimizer, criterion, device=device, epoch=i, writer=writer)
         print(f"Epoch {i} done!")
-        torch.save(model.state_dict(), os.path.join(args.base_path, f"./weights_{i}_count.pth"))
+        torch.save(model.state_dict(), os.path.join(base_path, f"./weights_{i}_count.pth"))
         if (i % 10 == 0) & (i > 0):
             cells_val, results_val = val_epoch(model, val_loader, device=device)
             metrics = Metrics([],
                               writer,
                               prefix="val")
             metrics(cells_val, results_val, i)
-            metrics.save_results(os.path.join(args.base_path, f"val_results_{i}.csv"), cells_val, results_val)
+            metrics.save_results(os.path.join(base_path, f"val_results_{i}.csv"), cells_val, results_val)
             #  TODO uncooment to eval on the train as well
             # cells_train, results_train = val_epoch(model, train_loader_for_eval, device=device)
             #  metrics = Metrics(
