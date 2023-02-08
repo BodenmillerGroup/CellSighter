@@ -31,8 +31,8 @@ save2tiff <- function(CytoImageList, root_dir, masks = FALSE){
     }
 
     # save masks as tiff
-    lapply(names(CytImageList), function(x){
-      writeImage(as.array(CytImageList[[x]])/(2^16 - 1),
+    lapply(names(CytoImageList), function(x){
+      writeImage(as.array(CytoImageList[[x]])/(2^16 - 1),
                  paste0(root_dir,"/CellTypes/cells/",x, ".tiff"),
                  bits.per.sample = 16)
     })

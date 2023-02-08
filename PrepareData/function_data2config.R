@@ -14,7 +14,7 @@ data2config <- function(path_to_store, root_dir, crop_input_size=NULL ,train_spl
 
   # create hierarchy_match string
   hierarchy_match_string <- ""
-  for (label in names(dic)){
+  for (label in names(dic[dic!="-1"])){
     hierarchy_match_string <- paste0(hierarchy_match_string,"\"",dic[label],"\":","\"",label,"\", ")
   }
   hierarchy_match_string <- substring(hierarchy_match_string,1,nchar(hierarchy_match_string)-2)
@@ -51,7 +51,7 @@ data2config <- function(path_to_store, root_dir, crop_input_size=NULL ,train_spl
   #TODO: implement case where train or val set is given
 
   # create blacklist string
-  blacklist_string <- paste(blacklist,collapse = '","')
+  blacklist_string <- paste(blacklist,collapse = '\",\"')
   blacklist_string <- paste0("[\"",blacklist_string,"\"]")
 
   # create channels_path string

@@ -47,7 +47,8 @@ cells2labels <- function(root_dir, sce, image_id_col, cell_label_col, non_labell
     df$label <- dic[df$CellLabel]
     #TODO: how to make sure all cells in there? If possibly cell with highest ObjectNumber were excluded
     nr_lines = 1
-    final_string <- ""
+    # start with empty row because of python indexing
+    final_string <- "-1\n"
     # iterate over all cells
     for (object_nr in df$ObjectNumber){
       # if cell is missing, fill in rows with -1
@@ -61,6 +62,7 @@ cells2labels <- function(root_dir, sce, image_id_col, cell_label_col, non_labell
       final_string <- paste0(final_string, df$label[df$ObjectNumber == object_nr],"\n")
       nr_lines <- nr_lines + 1
     }
+
     # save as txt
     writeLines(final_string,con=paste0(root_dir,"/CellTypes/cells2labels/",x,".txt"),sep="")
     return (paste0(root_dir,"/CellTypes/cells2labels/",x,".txt"))
