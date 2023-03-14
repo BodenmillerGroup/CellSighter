@@ -1,0 +1,124 @@
+---
+title: "Analysis for ensemble"
+output:
+  workflowr::wflow_html:
+    toc: false
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+
+# Set path
+if (Sys.info()["sysname"] == "Darwin"){
+  mount_path <- "/Volumes/"
+} else if (Sys.info()["sysname"] == "Linux"){
+  mount_path <- "/mnt/"
+} else {
+  stop("Operating system is not supported")
+}
+```
+
+load data
+```{r}
+results <- read.csv("./data/results_all_models.csv")
+```
+
+
+compute correctness of pred per model and per label
+```{r}
+library(tibble)
+library(dplyr)
+
+eval <- results %>%
+  group_by(Output_name, label)%>%
+  summarize(label_ = sum(as.numeric(correct))/n())%>%
+  as.data.frame() %>%
+  reshape(idvar = "Output_name", timevar = "label", direction = "wide") %>%
+  remove_rownames() %>%
+  column_to_rownames(var = "Output_name")
+  
+
+eval_mat <- as.matrix(eval)
+class(eval_mat) <- "numeric"
+
+```
+
+# visualize evaluation per label
+```{r}
+library(ComplexHeatmap)
+library(circlize)
+library(viridis)
+
+
+col_fun = colorRamp2(c(0,0.5,1), c("white", "red", "darkred"))
+anno_fun = colorRamp2(c(0,1), c("white","darkgreen"))
+label_mean = colMeans(eval_mat)
+model_mean <- rowMeans(eval_mat)
+colAnno <- columnAnnotation(label_mean = label_mean, col = list(label_mean = anno_fun))
+rowAnno <- rowAnnotation(model_mean = model_mean, col = list(model_mean = anno_fun), show_legend=c(F))
+
+Heatmap(eval_mat, row_title = "Model Output", show_column_dend = T, show_row_dend = T,col= col_fun, right_annotation = rowAnno, top_annotation = colAnno)
+
+```
+
+correlation between crop_input_size and prediction accuracy, aswell as dependency on cell size
+```{r}
+library(ggplot2)
+
+# compute correct predicted cells per label per crop_input_size
+ggplot(results, aes(x = crop_input_size, fill = as.factor(correct)))+
+  geom_bar(position = "fill") +
+  labs(y = "Proportion")+
+  facet_wrap(~label)
+```
+
+dependency on cell size
+```{r}
+# TODO: add crop_input_size information
+
+ggplot(results%>%
+         group_by(label,crop_input_size)%>%
+         summarise(radius = mean(sqrt(area/pi)),accuracy = sum(correct)/n(), crop_input_size = unique(crop_input_size))%>%
+         filter(label!=-1),
+       aes(x = radius, y= accuracy, col = as.factor(crop_input_size)))+
+  geom_point() +
+  theme_bw() +
+  geom_smooth(method="lm")
+```
+
+
+__Output_2 gets almost as much right as a combination of models, but as most cells are tumor cells, we want to determine which models have non-overlaping strength in respect to the label__
+
+```{r}
+
+ggplot(results, aes(x = label, fill = as.factor(correct)))+
+  geom_bar(position = "fill") +
+  labs(y = "Proportion")+
+  facet_wrap(~Output_name)
+
+
+# hm_list <- NULL
+# hm_sublist <- NULL
+# 
+# for (i in 1:dim(fractions)[3]){
+#   hm <- Heatmap(fractions[,,i], col = col_fun, show_heatmap_legend=F, cluster_rows = F,cluster_columns = F,column_title=dimnames(fractions)[[3]][i])
+#   
+#   
+#   hm_sublist <- hm_sublist + hm
+#   
+#   if (i%%3 == 0){
+#     if(is.null(hm_list)){hm_list <- hm_sublist}
+#     else{
+#       hm_list <- hm_list %v% hm_sublist
+#       hm_sublist <- NULL
+#     }
+#   }
+# }
+# 
+# hm_list
+
+```
+

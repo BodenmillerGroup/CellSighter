@@ -77,7 +77,7 @@ if __name__ == "__main__":
     # parser.add_argument('--base_path', type=str,
                         # help='configuration_path')
     # args = parser.parse_args()
-    base_path = "/Volumes/bpalau/Git/CellSighter/Output"
+    base_path = "/Volumes/immucan_volume/processed_data/Panel_1/CellSighter/Output_B/"
     writer = SummaryWriter(log_dir=base_path)
     config_path = os.path.join(base_path, "config.json")
     with open(config_path) as f:

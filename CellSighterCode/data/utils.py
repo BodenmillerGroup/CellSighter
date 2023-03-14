@@ -7,6 +7,7 @@ from PIL import Image
 from skimage import io
 
 
+
 def read_channels(path):
     """
     Reads channels from a line-separated text file.
@@ -41,17 +42,48 @@ def load_data(fname) -> np.ndarray:
         image = np.load(fname, allow_pickle=True)['data']
     elif fname.endswith(".tif") or fname.endswith(".tiff"):
         image = io.imread(fname)
-        ## ADDED: dimensions are read as (40,600,600) -> reshaping to (600,60040)
+        ## ADDED: dimensions are read as (40,600,600) -> reshaping to (600,600,40)
         if image.ndim == 3:
             image = np.moveaxis(image,0,-1)
+            if image.shape[0] < image.shape[-1] or image.shape[1] < image.shape[-1]:
+                raise TypeError
     return image
 
 
 def load_image(image_path, cells_path, cells2labels_path, channels=[], to_pad=False, crop_size=0):
+
     image = load_data(image_path)
+    
+    # from tifffile import imwrite
+    # one_slide = image[-1,:,:]
+    
+    # image = np.moveaxis(image,-1,0)
+    # imwrite('dna2.tiff', one_slide) #, description="hohoho")
+    
+    
     if len(channels) > 0:
         image = image[..., channels]
     cells = load_data(cells_path).astype(np.int64)
+    
+
+
+    # mask = cells[:,:]
+    # mask[cells > 0] = 100
+    # mask = mask.astype('int16')
+    # imwrite('mask.tiff', mask) #, description="hohoho")
+    
+
+    
+
+    
+    # test if masks and image overlay correctly
+    # get DNA1 channel
+    # dna1 = image[:,:,-2]
+    
+    # total_mean = np.mean(dna1)
+    # cell_mean = np.mean(dna1[cells>0])
+    # non_zero = np.mean(dna1[dna1!=0])
+
     if cells2labels_path.endswith(".npz"):
         cells2labels = np.load(cells2labels_path, allow_pickle=True)['data'].astype(np.int32)
     elif cells2labels_path.endswith(".txt"):
@@ -122,6 +154,7 @@ def load_samples(images_dir, cells_dir, cells2labels_dir, images_names, crop_siz
                                           channels=channels,
                                           to_pad=to_pad,
                                           crop_size=crop_size)
+        
 
         objs = ndimage.find_objects(cells)
         for cell_id, obj in enumerate(objs, 1):

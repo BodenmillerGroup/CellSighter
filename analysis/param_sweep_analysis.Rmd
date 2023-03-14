@@ -1,0 +1,359 @@
+---
+title: "Param sweep analysis"
+output:
+  workflowr::wflow_html:
+    toc: false
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+
+# Set path
+if (Sys.info()["sysname"] == "Darwin"){
+  mount_path <- "/Volumes/"
+} else if (Sys.info()["sysname"] == "Linux"){
+  mount_path <- "/mnt/"
+} else {
+  stop("Operating system is not supported")
+}
+```
+
+load in results from CellSighter and sce
+```{r}
+library(stringr)
+library(dplyr)
+library(SummarizedExperiment)
+library(readxl)
+library(tidyverse)
+
+# load sce
+sce <- readRDS(paste0(mount_path,"immucan_volume/processed_data/Panel_1/cell_classification/sce_selected.rds"))
+
+# load results
+results <- lapply(list.dirs(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/ParamSweep/")),function(x){
+  if(file.exists(paste0(x,"/val_results.csv"))){
+    output <- str_extract(x,"Model_[0-9]{1,2}")
+    df <- read.csv(paste0(x,"/val_results.csv"))
+    df$Output_name <- rep(output,nrow(df))
+    df <- df[,-c(1)]
+    return (df)
+    }
+  }
+)
+
+results <- bind_rows(results)
+results$label <- as.character(results$label)
+
+# load hyperparam dataframe
+hyperparams <- read.csv("data/hyperparams.csv")
+hyperparams$X <- NULL
+rownames(hyperparams) <- hyperparams$Model_name
+hyperparams$val_set <- as.factor(hyperparams$val_set)
+hyperparams$crop_input_size <- as.factor(hyperparams$crop_input_sizue)
+# correct spelling mistake
+hyperparams$crop_input_sizue <- NULL
+hyperparams$epoch_max <- as.factor(hyperparams$epoch_max)
+hyperparams$lr <- as.factor(hyperparams$lr)
+
+
+# create dictionary for translation between cell type id and cell type label
+# create label to label-id dictionary, set unlabeled to -1
+dic <- c()
+labels <- sort(unique(sce$cell_labels))
+labels <- labels[labels != "unlabelled"]
+
+for (i in 1:length(labels)){
+  dic[as.character(i-1)] <- labels[[i]]
+}
+dic["-1"] <- "unlabelled"
+
+results$pred <- dic[as.character(results$pred)]
+results$label <- dic[results$label]
+```
+
+
+```{r}
+# create unique cell id for all cells
+results$unique_id <- paste0(results$image_id, results$cell_id)
+sce$unique_id <- paste0(str_split(sce$image,".tiff", simplify = T)[,1],sce$ObjectNumber)
+
+# merge data with sce
+results <- as.data.frame(merge(results,colData(sce),by="unique_id"))
+```
+
+
+Confusion matrix
+```{r}
+library(caret)
+
+# filter unlabelled cells
+results <- results %>%
+  filter(label != "unlabelled")
+
+sens_matrix <- matrix(rep(0, length(unique(results$Output_name))*length(unique(results$label))),nrow = length(unique(results$Output_name)), ncol = length(unique(results$label)))
+spec_matrix <- matrix(rep(0, length(unique(results$Output_name))*length(unique(results$label))),nrow = length(unique(results$Output_name)), ncol = length(unique(results$label)))
+f1_matrix <- matrix(rep(0, length(unique(results$Output_name))*length(unique(results$label))),nrow = length(unique(results$Output_name)), ncol = length(unique(results$label)))
+conf_array <- array(rep(0,length(unique(results$label))*length(unique(results$label))*length(unique(results$Output_name))),
+                    dim = c(length(unique(results$label)),length(unique(results$label)),length(unique(results$Output_name))),
+                    dimnames = list(sort(unique(results$label)),sort(unique(results$label)),unique(results$Output_name))
+                    )
+
+sens_spec_plots <- vector('list', length(unique(results$Output_name)))
+
+show = "none"
+for (i in 1:length(unique(results$Output_name))){
+  if (i == length(unique(results$Output_name))) show = "bottom"
+  model <- unique(results$Output_name)[i]
+  df <- results[results$Output_name == model,]
+  cm <- confusionMatrix(as.factor(df$pred), as.factor(df$label),
+                mode = "everything")
+  
+  sens_spec_plot <- data.frame(cm$byClass) %>%
+    mutate(class = sub("Class: ", "", rownames(cm$byClass))) %>%
+    ggplot() + 
+    geom_point(aes(1 - Specificity, Sensitivity, 
+                   size = Detection.Rate,
+                   fill = class),
+               shape = 21) + 
+    scale_fill_manual(values = metadata(sce)$colour_vectors$cell_types) + 
+    theme_bw() +
+    ggtitle(model) +
+    theme(legend.position = show) +
+    ylab("Sensitivity (TPR)") +
+    xlab("1 - Specificity (FPR)")
+  
+  sens_spec_plots[[i]] <- sens_spec_plot
+  
+  conf_matrix <- t(t(cm$table)/colSums(cm$table))
+  f1_scores <- cm$byClass[,"F1"]
+  sens_scores <- cm$byClass[,"Sensitivity"]
+  spec_scores <- cm$byClass[,"Specificity"]
+  
+  conf_array[,,i] <- conf_matrix[sort(rownames(conf_matrix)),sort(rownames(conf_matrix))]
+  f1_matrix[i,] <- f1_scores
+  sens_matrix[i,] <- sens_scores
+  spec_matrix[i,] <- spec_scores
+}
+
+colnames(f1_matrix) <- colnames(sens_matrix) <- colnames(spec_matrix) <- names(f1_scores)
+rownames(f1_matrix) <- rownames(sens_matrix) <- rownames(spec_matrix)<- unique(results$Output_name)
+
+```
+
+```{r, fig.width=15, fig.height=15}
+library(cowplot)
+
+plot_grid(plotlist = sens_spec_plots)
+
+```
+
+
+```{r}
+library(ComplexHeatmap)
+library(circlize)
+library(viridis)
+
+
+col_fun = colorRamp2(c(0,1), c("white","red"))
+col_fun2 = colorRamp2(c(0,1), c("white","blue"))
+
+# hm_list <- NULL
+
+for (i in 1:dim(conf_array)[3]){
+  conf_matrix <- conf_array[,,i]
+  # col_anno <- columnAnnotation(f1 = f1_matrix[i,], col = list(f1 = col_fun, Sensitivity = col_fun2, Specificity = col_fun2),
+  #                              F1 = anno_text(sprintf("%.2f", f1_matrix[i,]), location = 0.5, just = "center",rot = 0),
+  #                              Sensitivity = sens_matrix[i,],
+  #                              Sens = anno_text(sprintf("%.2f", sens_matrix[i,]), location = 0.5, just = "center",rot = 0),
+  #                              Specificity = spec_matrix[i,],
+  #                              Spec = anno_text(sprintf("%.2f", spec_matrix[i,]), location = 0.5, just = "center",rot = 0))
+  
+  col_anno <- columnAnnotation(f1 = f1_matrix[i,], col = list(f1 = col_fun),
+                               F1 = anno_text(sprintf("%.2f", f1_matrix[i,]), location = 0.5, just = "center",rot = 0))
+
+  hm <- Heatmap(conf_matrix, col = viridis(100),
+                cluster_rows = F,
+                cluster_columns = F,
+                bottom_annotation = col_anno,
+                column_names_side = "top",
+                heatmap_legend_param = list(at = c(0,0.2,0.4,0.6,0.8,1), title = "CM"),
+                show_heatmap_legend = T,
+                column_title = dimnames(conf_array)[[3]][i],
+                cell_fun = function(j, i, x, y, width, height, fill){
+                  grid.text(sprintf("%.2f", conf_matrix[i, j]), x, y, gp = gpar(fontsize = 10))})
+  draw(hm)
+  # hm_list <- hm_list + hm
+}
+
+```
+
+visualize f1 scores
+```{r, fig.width=15,fig.height=10}
+library(RColorBrewer)
+
+# get rid of na values in matrix
+f1_matrix <- f1_matrix[,-c(1)]
+
+col_vec_val_set = brewer.pal(name = "Set1", n = length(unique(hyperparams$val_set)))
+names(col_vec_val_set) = unique(hyperparams$val_set)
+
+col_vec_crop_input_size = brewer.pal(name = "Set2", n = length(unique(hyperparams$crop_input_size)))
+names(col_vec_crop_input_size) = unique(hyperparams$crop_input_size)
+
+col_vec_epoch_max = brewer.pal(name = "Set3", n = length(unique(hyperparams$epoch_max)))[1:2]
+names(col_vec_epoch_max) = unique(hyperparams$epoch_max)
+
+col_vec_lr = brewer.pal(name = "Accent", n = length(unique(hyperparams$lr)))[1:2]
+names(col_vec_lr) = unique(hyperparams$lr)
+
+col_vec_hierarchy = brewer.pal(name = "Dark2", n = length(unique(hyperparams$hierarchy_match)))[1:2]
+names(col_vec_hierarchy) = unique(hyperparams$hierarchy_match)
+
+                              
+
+# create hyperparams row annotation
+hyperparams$crop_input_size <- as.factor(hyperparams$crop_input_size)
+ha = rowAnnotation(df = hyperparams[hyperparams$Model_name %in% rownames(f1_matrix),][rownames(f1_matrix),]%>%select(-Model_name),
+                   col = list(val_set = col_vec_val_set,
+                              crop_input_size = col_vec_crop_input_size,
+                              epoch_max = col_vec_epoch_max,
+                              lr = col_vec_lr,
+                              hierarchy_match = col_vec_hierarchy
+                              )
+                   )
+
+Heatmap(f1_matrix, show_column_dend = F, show_row_dend = T, left_annotation = ha,
+        heatmap_legend_param = list(title = "F1"),
+        col = col_fun,
+        cell_fun = function(j, i, x, y, width, height, fill){
+                  grid.text(sprintf("%.2f", f1_matrix[i, j]), x, y, gp = gpar(fontsize = 10))})
+
+```
+#TODO: add SCE information to the analysis and find correlations (cell type specific hyperparameters needed for OVA??)
+
+correlation between crop_input_size and prediction accuracy, aswell as dependency on cell size
+```{r}
+library(ggplot2)
+
+results <- results %>%
+  mutate(correct = ifelse(pred == label, 1, 0))
+
+results <- merge(results, hyperparams, by.x = "Output_name", by.y = "Model_name")
+
+# compute correct predicted cells per label per crop_input_size
+ggplot(results, aes(x = crop_input_size, fill = as.factor(correct)))+
+  geom_bar(position = "fill") +
+  labs(y = "Proportion")+
+  facet_wrap(~label)
+```
+
+dependency on cell size
+```{r}
+# TODO: add crop_input_size information
+
+ggplot(results%>%
+         group_by(label,crop_input_size)%>%
+         summarise(radius = mean(sqrt(area/pi)),accuracy = sum(correct)/n(), crop_input_size = unique(crop_input_size))%>%
+         filter(label!=-1),
+       aes(x = radius, y= accuracy, col = as.factor(crop_input_size)))+
+  geom_point() +
+  theme_bw() +
+  geom_smooth(method="lm")
+
+
+ggplot(results%>%
+         group_by(label,crop_input_size)%>%
+         summarise(radius = mean(sqrt(area/pi)),accuracy = sum(correct)/n(), crop_input_size = unique(crop_input_size))%>%
+         filter(!label%in%c(-1,13)),
+       aes(x = radius, y= accuracy, col = as.factor(crop_input_size)))+
+  geom_point() +
+  theme_bw() +
+  geom_smooth(method="lm")
+```
+
+correlation between hierarchy_match and prediction accuracy, as well as dependency on label abundance
+```{r}
+# compute correct predicted cells per label per crop_input_size
+ggplot(results, aes(x = hierarchy_match, fill = as.factor(correct)))+
+  geom_bar(position = "fill") +
+  labs(y = "Proportion")+
+  facet_wrap(~label)
+```
+
+
+```{r}
+ggplot(results %>%
+  group_by(Output_name,label,hierarchy_match)%>%
+  summarise(abundance = n(),acc = sum(correct)/n())%>%
+    group_by(label,hierarchy_match)%>%
+    summarise(abundance = mean(abundance), acc = mean(acc)),
+  aes(x = log(abundance), y= acc, col = hierarchy_match))+
+  geom_point() +
+  geom_smooth(method = "lm")
+```
+
+#TODO: add epoch max and lr analysis
+
+correlation between epoch_max and accuracy per cell type (do some cell Type profit more from more epochs than others?)
+```{r}
+# compute correct predicted cells per label per crop_input_size
+ggplot(results, aes(x = epoch_max, fill = as.factor(correct)))+
+  geom_bar(position = "fill") +
+  labs(y = "Proportion")+
+  facet_wrap(~label)
+```
+```{r}
+ggplot(results%>%
+         filter(label != -1) %>%
+         group_by(label, epoch_max)%>%
+         summarise(accuracy = sum(correct)/n(), label = unique(label)),
+       aes(x = epoch_max, y = accuracy))+
+  geom_boxplot()+
+  geom_point(aes(col = label))
+```
+
+correlation between lr and accuracy per cell type (do some cell Type profit more higher lr than others?)
+```{r}
+# compute correct predicted cells per label per crop_input_size
+ggplot(results, aes(x = lr, fill = as.factor(correct)))+
+  geom_bar(position = "fill") +
+  labs(y = "Proportion")+
+  facet_wrap(~label)
+```
+
+
+```{r}
+ggplot(results%>%
+         filter(label != -1) %>%
+         group_by(label, lr)%>%
+         summarise(accuracy = sum(correct)/n(), label = unique(label)),
+       aes(x = lr, y = accuracy))+
+  geom_boxplot()+
+  geom_point(aes(col = label))
+```
+optimal combination of lr and epoch max
+```{r}
+# compute correct predicted cells per label per crop_input_size
+ggplot(results%>%
+         group_by(epoch_max,lr,label)%>%
+         mutate(id = paste0(lr,"_",epoch_max)),
+       aes(x = id, fill = as.factor(correct)))+
+  geom_bar(position = "fill") +
+  labs(y = "Proportion")+
+  facet_wrap(~label)
+```
+
+```{r}
+ggplot(results%>%
+         filter(label != -1) %>%
+         group_by(epoch_max, lr, label)%>%
+         summarise(accuracy = sum(correct)/n(), label = unique(label))%>%
+         mutate(id = paste0(lr,"_",epoch_max)),
+       aes(x = id, y = accuracy))+
+  geom_boxplot()+
+  geom_point(aes(col = label))
+```
+# TODO:

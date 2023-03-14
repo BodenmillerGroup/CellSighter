@@ -1,0 +1,187 @@
+---
+title: "Visualize predictions"
+output:
+  workflowr::wflow_html:
+    toc: false
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+
+# Set path
+if (Sys.info()["sysname"] == "Darwin"){
+  mount_path <- "/Volumes/"
+} else if (Sys.info()["sysname"] == "Linux"){
+  mount_path <- "/mnt/"
+} else {
+  stop("Operating system is not supported")
+}
+```
+
+
+load data
+```{r read-in-data}
+library(stringr)
+library(dplyr)
+library(SummarizedExperiment)
+library(readxl)
+library(tidyverse)
+
+# load sce
+sce <- readRDS(paste0(mount_path,"immucan_volume/processed_data/Panel_1/cell_classification/sce_selected.rds"))
+
+sce$image <- sub(".tiff", "", sce$image)
+
+# Read in masks
+masks <- readRDS(paste0(mount_path,"immucan_volume/processed_data/Panel_1/cell_classification/all_masks.rds"))
+
+# Read in images
+images <- readRDS(paste0(mount_path,"immucan_volume/processed_data/Panel_1/cell_classification/all_images.rds"))
+
+```
+
+
+normalize images
+```{r normalize-1}
+# 
+# # create directory if necessary
+# if(!dir.exists(paste0(mount_path,"immucan_volume/processed_data/Panel_1/cell_classification/Rout/data"))){
+#   dir.create(paste0(mount_path,"immucan_volume/processed_data/Panel_1/cell_classification/Rout"))
+# }
+# 
+# for(i in c("BREAS", "THOR", "GI", "HN", "GU")){
+#   
+#   if (sum(mcols(all_images)$Indication == i) == 0) next
+#   
+#   cur_images <- all_images[mcols(all_images)$Indication == i]
+#   cur_masks <- all_masks[mcols(all_masks)$Indication == i]
+#   
+#   cur_images <- CytoImageList(cur_images, on_disk = FALSE)
+#   cur_masks <- CytoImageList(cur_masks, on_disk = FALSE)
+#   
+#   cur_images <- normalize(cur_images, separateImages = TRUE)
+#   cur_images <- normalize(cur_images, separateImages = TRUE, 
+#                         inputRange = c(0, 0.2))
+#   
+#   saveRDS(cur_images, paste0(mount_path, 
+#                             "processed_data/Panel_1/cell_classification/Rout/data/", 
+#                             i, "_norm_images.rds"))
+#   saveRDS(cur_masks, paste0(mount_path, 
+#                             "processed_data/Panel_1/", BATCH, "/Rout/data/", 
+#                             i, "_masks.rds"))
+#   gc()
+# }
+```
+
+
+```{r define-markers-per-celltype}
+cell_types <- names(metadata(sce)$colour_vectors$cell_types)
+
+markers <- vector(mode = "list", length = length(cell_types))
+names(markers) <- cell_types
+
+markers[["B"]] <- c("CD20", "CD3")
+markers[["BnT"]] <- c("CD20", "CD3")
+markers[["plasma"]] <- c("CD38")
+markers[["T_cell"]] <- c("CD3", "CD20")
+markers[["CD4"]] <- c("CD4", "CD8a", "FOXP3")
+markers[["CD8"]] <- c("CD4", "CD8a", "FOXP3")
+markers[["Treg"]] <- c("CD4", "CD8a", "FOXP3")
+markers[["DC"]] <- c("CD11c", "CD163", "CD68")
+markers[["MacCD163"]] <- c("CD11c", "CD163", "CD68")
+markers[["HLADR"]] <- c("CD11c", "CD163", "HLADR")
+markers[["Neutrophil"]] <- c("CD15", "MPO")
+markers[["NK"]] <- c("CD7", "CD3")
+markers[["pDC"]] <- c("CD303")
+markers[["Mural"]] <- c("SMA", "PDGFRb")
+markers[["Tumor"]] <- c("Ecad", "CarbonicAnhydrase")
+markers[["undefined"]] <- c("DNA1")
+
+# positivity <- vector(mode = "list", length = 5)
+# names(positivity) <- c("PD1_pos", "PDL1_pos", "Ki67_pos", "cleavedPARP_pos", "GrzB_pos")
+# 
+# positivity[["PD1_pos"]] <- c("PD1")
+# positivity[["PDL1_pos"]] <- c("PDL1")
+# positivity[["Ki67_pos"]] <- c("Ki67")
+# positivity[["cleavedPARP_pos"]] <- c("cleavedPARP")
+# positivity[["GrzB_pos"]] <- c("GrzB")
+# 
+# patches <- vector(mode = "list", length = 2)
+# names(patches) <- c("tumor_patches", "CD20_patches")
+# 
+# patches[["tumor_patches"]] <- c("Ecad", "CarbonicAnhydrase")
+# patches[["CD20_patches"]] <- c("CD20", "CD3")
+```
+
+```{r viz-cell-types}
+# image_files <- list.files(paste0(mount_path, 
+#                       "processed_data/Panel_1/", BATCH, "/Rout/data"),
+#                       pattern = "_norm_images.rds",
+#                       full.names = TRUE)
+# mask_files <- list.files(paste0(mount_path, 
+#                       "processed_data/Panel_1/", BATCH, "/Rout/data"),
+#                       pattern = "_masks.rds",
+#                       full.names = TRUE)
+
+for(i in unique(sce$Indication)){
+  
+  if (sum(grepl(i, image_files)) == 0) next
+  
+  cur_images <- image_files[grepl(i, image_files)]
+  cur_images <- readRDS(cur_images)
+  cur_masks <- mask_files[grepl(i, mask_files)]
+  cur_masks <- readRDS(cur_masks)
+ 
+  # generate folders if they do not already exist 
+  if (! dir.exists(paste0(mount_path,"/processed_data/Panel_1/", BATCH, "/Rout/images/CellTypeValidation/",i,"/"))) {
+    dir.create(paste0(mount_path,"/processed_data/Panel_1/", BATCH, "/Rout/images/CellTypeValidation/",i,"/"), recursive = TRUE)
+  }
+  
+  for(j in unique(sce$celltypes)){
+    cur_sce <- sce[,sce$celltypes == j & sce$Indication == i]
+    cur_markers <- markers[[j]]
+  
+    # when only few images are present and a certain celltypes does not exist an empty cur_sce object is created which cannot be processed.
+    if(dim(cur_sce)[2] == 0) {
+      next
+    }
+    
+    if (length(cur_markers) == 1) {
+      cur_col <- "red"
+      names(cur_col) <- j
+      cur_col <- list(cur_col)
+      names(cur_col) <- "celltypes"
+      plotPixels(image = cur_images, 
+                object = cur_sce, 
+                mask = cur_masks, 
+                cell_id = "ObjectNumber",
+                img_id = "image", 
+                colour_by = cur_markers, 
+                outline_by = "celltypes",
+                image_title = list(text = names(cur_images),
+                                cex = 1), 
+                colour = cur_col,
+                save_plot = list(filename = paste0(mount_path, 
+                            "/processed_data/Panel_1/", BATCH, "/Rout/images/CellTypeValidation/",
+                            i, "/", j, ".png")))
+    } else {
+        plotPixels(image = cur_images,
+                   object = cur_sce, 
+                   mask = cur_masks, 
+                   cell_id = "ObjectNumber",
+                   img_id = "image", 
+                   colour_by = cur_markers, 
+                   outline_by = "celltypes",
+                   image_title = list(text = names(cur_images),
+                                  cex = 1),
+                   save_plot = list(filename = paste0(mount_path, 
+                            "/processed_data/Panel_1/", BATCH, "/Rout/images/CellTypeValidation/",
+                            i, "/", j, ".png")))
+    }
+  }
+}
+```
+

@@ -1,0 +1,58 @@
+---
+title: "CellSighter Performance: Hierarchy_match"
+output:
+  workflowr::wflow_html:
+    toc: false
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+
+# Set path
+if (Sys.info()["sysname"] == "Darwin"){
+  mount_path <- "/Volumes/"
+} else if (Sys.info()["sysname"] == "Linux"){
+  mount_path <- "/mnt/"
+} else {
+  stop("Operating system is not supported")
+}
+```
+
+load data
+```{r}
+results <- read.csv("./data/results_all_models.csv")
+
+results <- results %>%
+  filter(label != -1)
+```
+
+
+correlation between hierarchy_match and prediction accuracy, as well as dependency on label abundance
+```{r}
+# A: only immune and other (mural, tumor)
+# B: Each individual Cell Type
+# C: underrepresented cell types get individual category (5,6,8,9,10)
+
+# compute correct predicted cells per label per crop_input_size
+ggplot(results, aes(x = hierarchy_match, fill = as.factor(correct)))+
+  geom_bar(position = "fill") +
+  labs(y = "Proportion")+
+  facet_wrap(~label)
+```
+
+
+```{r}
+ggplot(results %>%
+  group_by(Output_name,label,hierarchy_match)%>%
+  summarise(abundance = n(),acc = sum(correct)/n())%>%
+    group_by(label,hierarchy_match)%>%
+    summarise(abundance = mean(abundance), acc = mean(acc)),
+  aes(x = log(abundance), y= acc, col = hierarchy_match))+
+  geom_point() +
+  geom_smooth(method = "lm")
+```
+
+

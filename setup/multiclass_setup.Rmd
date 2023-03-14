@@ -1,0 +1,46 @@
+---
+title: "Prepare Input for ensemble"
+output:
+  workflowr::wflow_html:
+    toc: false
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+
+# Set path
+if (Sys.info()["sysname"] == "Darwin"){
+  mount_path <- "/Volumes/"
+} else if (Sys.info()["sysname"] == "Linux"){
+  mount_path <- "/mnt/"
+} else {
+  stop("Operating system is not supported")
+}
+```
+
+Create 10 models to replicate CellSighter Paper
+```{r}
+if(!dir.exists(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Multiclass"))){
+    dir.create(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Multiclass"))
+  }
+
+
+for (i in seq(1,10)){
+  if(!dir.exists(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Multiclass/Model_",i))){
+    dir.create(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Multiclass/Model_",i))
+  }
+  
+  data2config(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Multiclass/Model_",i,"/"),
+            # use data prepared by prepare_input_data.Rmd
+            paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Input/"),
+            # using information from param sweep analysis
+            crop_input_size = 30,
+            epoch_max = 60,
+            lr = 0.005,
+            blacklist = c("DNA1","DNA2","HistoneH3"))
+}
+
+```

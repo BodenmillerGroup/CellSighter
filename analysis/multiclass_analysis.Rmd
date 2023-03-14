@@ -1,0 +1,87 @@
+---
+title: "multiclass classification ensemble analysis"
+output:
+  workflowr::wflow_html:
+    toc: false
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+
+# Set path
+if (Sys.info()["sysname"] == "Darwin"){
+  mount_path <- "/Volumes/"
+} else if (Sys.info()["sysname"] == "Linux"){
+  mount_path <- "/mnt/"
+} else {
+  stop("Operating system is not supported")
+}
+```
+
+
+load data
+```{r}
+sce <- readRDS(paste0(mount_path,"immucan_volume/processed_data/Panel_1/cell_classification/sce_selected.rds"))
+
+# import merged results created with many2one.py
+df <- read.csv(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Multiclass/merged_results.csv"))
+df$X <- NULL
+```
+
+
+```{r}
+# create unique cell id for all cells
+df$unique_id <- paste0(df$image_id, df$cell_id)
+sce$unique_id <- paste0(str_split(sce$image,".tiff", simplify = T)[,1],sce$ObjectNumber)
+
+# merge data with sce
+results <- as.data.frame(merge(df,colData(sce),by="unique_id"))
+```
+
+Confusion matrix
+```{r}
+library(caret)
+
+# change name so levels fit between reference and predictions
+results$final_pred[results$final_pred == "undefined"] <- "unlabelled"
+
+cm <- confusionMatrix(as.factor(results$final_pred), as.factor(results$label),
+                mode = "everything")
+
+
+conf_matrix <- t(t(cm$table)/colSums(cm$table))
+f1_scores <- cm$byClass[,"F1"]
+```
+
+
+```{r}
+library(ComplexHeatmap)
+library(circlize)
+library(viridis)
+
+
+col_fun = colorRamp2(c(0,1), c("white","red"))
+col_anno <- columnAnnotation(f1 = f1_scores, col = list(f1 = col_fun),
+                             F1 = anno_text(sprintf("%.2f", f1_scores), location = 0.5, just = "center",rot = 0))
+
+hm <- Heatmap(conf_matrix, col = viridis(100),
+              column_title = "Label",
+              row_title = "CellSighter",
+              cluster_rows = F,
+              cluster_columns = F,
+              bottom_annotation = col_anno,
+              column_names_side = "top",
+              heatmap_legend_param = list(at = c(0,0.2,0.4,0.6,0.8,1)),
+              show_heatmap_legend = F,
+              #column_title = dimnames(conf_matrix)[[3]][i],
+              cell_fun = function(j, i, x, y, width, height, fill){
+                grid.text(sprintf("%.2f", conf_matrix[i, j]), x, y, gp = gpar(fontsize = 10))})
+
+hm
+```
+
+
+

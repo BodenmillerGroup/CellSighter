@@ -1,0 +1,130 @@
+---
+title: "load results from CellSighter"
+output:
+  workflowr::wflow_html:
+    toc: false
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+
+# Set path
+if (Sys.info()["sysname"] == "Darwin"){
+  mount_path <- "/Volumes/"
+} else if (Sys.info()["sysname"] == "Linux"){
+  mount_path <- "/mnt/"
+} else {
+  stop("Operating system is not supported")
+}
+```
+
+
+load in results from CellSighter and sce
+```{r}
+library(stringr)
+library(dplyr)
+library(SummarizedExperiment)
+library(readxl)
+library(tidyverse)
+
+# load sce
+sce <- readRDS(paste0(mount_path,"immucan_volume/processed_data/Panel_1/cell_classification/sce_selected.rds"))
+
+
+results <- lapply(list.dirs(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Output/")),function(x){
+  if(file.exists(paste0(x,"/val_results.csv"))){
+    output <- str_extract(x,"Output_[0-9]{1,2}")
+    df <- read.csv(paste0(x,"/val_results.csv"))
+    df$Output_name <- rep(output,nrow(df))
+    df <- df[,-c(1)]
+    return (df)
+    }
+  }
+)
+
+results <- bind_rows(results)
+results$label <- as.character(results$label)
+
+# create unique cell id for all cells
+results$unique_id <- paste0(results$image_id, results$cell_id)
+
+```
+
+merge with sce colData
+```{r}
+sce$unique_id <- paste0(str_split(sce$image,".tiff", simplify = T)[,1],sce$ObjectNumber)
+results <- as.data.frame(merge(results,colData(sce),by="unique_id"))
+```
+
+# add crop size information
+```{r}
+# add crop size per model
+results$crop_input_size <- rep(NA,nrow(results))
+results <- results %>%
+  mutate(crop_input_size = ifelse(Output_name == "Output_2", 19,crop_input_size)) %>%
+  mutate(crop_input_size = ifelse(Output_name == "Output_3", 30,crop_input_size)) %>%
+  mutate(crop_input_size = ifelse(Output_name == "Output_4", 40,crop_input_size)) %>%
+  mutate(crop_input_size = ifelse(Output_name == "Output_5", 30,crop_input_size)) %>%
+  mutate(crop_input_size = ifelse(Output_name == "Output_6", 30,crop_input_size)) %>%
+  mutate(crop_input_size = ifelse(Output_name == "Output_7", 19,crop_input_size)) %>%
+  mutate(crop_input_size = ifelse(Output_name == "Output_8", 25,crop_input_size)) %>%
+  mutate(crop_input_size = ifelse(Output_name == "Output_9", 19,crop_input_size)) %>%
+  mutate(crop_input_size = ifelse(Output_name == "Output_10", 19,crop_input_size)) %>%
+  mutate(crop_input_size = ifelse(Output_name == "Output_11", 15,crop_input_size)) %>%
+  mutate(crop_input_size = ifelse(Output_name == "Output_12", 40,crop_input_size)) %>%
+  mutate(crop_input_size = ifelse(Output_name == "Output_13", 19,crop_input_size)) %>%
+  mutate(crop_input_size = ifelse(Output_name == "Output_14", 15,crop_input_size)) %>%
+  mutate(crop_input_size = ifelse(Output_name == "Output_15", 15,crop_input_size)) %>%
+  mutate(crop_input_size = ifelse(Output_name == "Output_16", 15,crop_input_size)) %>%
+  mutate(crop_input_size = ifelse(Output_name == "Output_17", 19,crop_input_size))
+
+results$crop_input_size <- as.factor(results$crop_input_size)
+```
+
+# add hierarch_match information
+```{r}
+# A: only immune and other (mural, tumor)
+# B: Each individual Cell Type
+# C: underrepresented cell types get individual category (5,6,8,9,10)
+# D: underrepresented cell types get individual category (2,3,4,5,6,8,9)
+# E: Cell lineages
+
+
+library(ggplot2)
+
+# add crop size per model
+results$hierarchy_match <- rep(NA,nrow(results))
+results <- results %>%
+  mutate(hierarchy_match = ifelse(Output_name == "Output_2", "A",hierarchy_match)) %>%
+  mutate(hierarchy_match = ifelse(Output_name == "Output_3", "A",hierarchy_match)) %>%
+  mutate(hierarchy_match = ifelse(Output_name == "Output_4", "A",hierarchy_match)) %>%
+  mutate(hierarchy_match = ifelse(Output_name == "Output_5", "B",hierarchy_match)) %>%
+  mutate(hierarchy_match = ifelse(Output_name == "Output_6", "A",hierarchy_match)) %>%
+  mutate(hierarchy_match = ifelse(Output_name == "Output_7", "B",hierarchy_match)) %>%
+  mutate(hierarchy_match = ifelse(Output_name == "Output_8", "B",hierarchy_match)) %>%
+  mutate(hierarchy_match = ifelse(Output_name == "Output_9", "C",hierarchy_match)) %>%
+  mutate(hierarchy_match = ifelse(Output_name == "Output_10", "B",hierarchy_match)) %>%
+  mutate(hierarchy_match = ifelse(Output_name == "Output_11", "A",hierarchy_match)) %>%
+  mutate(hierarchy_match = ifelse(Output_name == "Output_12", "A",hierarchy_match)) %>%
+  mutate(hierarchy_match = ifelse(Output_name == "Output_13", "A",hierarchy_match)) %>%
+  mutate(hierarchy_match = ifelse(Output_name == "Output_14", "C",hierarchy_match)) %>%
+  mutate(hierarchy_match = ifelse(Output_name == "Output_15", "A",hierarchy_match)) %>%
+  mutate(hierarchy_match = ifelse(Output_name == "Output_16", "D",hierarchy_match)) %>%
+  mutate(hierarchy_match = ifelse(Output_name == "Output_17", "E",hierarchy_match))
+results$hierarchy_match <- as.factor(results$hierarchy_match)
+```
+
+compute correct entries
+```{r}
+results <- results %>%
+  mutate(correct = ifelse(pred == label, 1, 0))
+```
+
+
+```{r}
+write_csv(x =results, file = "data/results_all_models.csv")
+```
+

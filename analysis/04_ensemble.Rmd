@@ -1,0 +1,293 @@
+---
+title: "Analysis for ensemble"
+output:
+  workflowr::wflow_html:
+    toc: false
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+
+# Set path
+if (Sys.info()["sysname"] == "Darwin"){
+  mount_path <- "/Volumes/"
+} else if (Sys.info()["sysname"] == "Linux"){
+  mount_path <- "/mnt/"
+} else {
+  stop("Operating system is not supported")
+}
+```
+
+load data
+```{r}
+results <- read.csv("./data/results_all_models.csv")
+```
+
+compute f1 score per label per model
+```{r}
+library(dplyr)
+library(caret)
+
+# get rid of non labelled
+results <- results%>%
+  filter(label != -1)
+
+f1_matrix <- matrix(rep(0, length(unique(results$Output_name))*length(unique(results$label))),nrow = length(unique(results$Output_name)), ncol = length(unique(results$label)))
+conf_array <- array(rep(0,length(unique(results$label))*length(unique(results$label))*length(unique(results$Output_name))),
+                    dim = c(length(unique(results$label)),length(unique(results$label)),length(unique(results$Output_name))),
+                    dimnames = list(sort(unique(results$label)),sort(unique(results$label)),unique(results$Output_name))
+                    )
+
+for (i in 1:length(unique(results$Output_name))){
+  model <- unique(results$Output_name)[i]
+  df <- results[results$Output_name == model,]
+  cm <- confusionMatrix(as.factor(df$pred), as.factor(df$label),
+                mode = "everything",
+                positive="1")
+  
+  
+  conf_matrix <- t(t(cm$table)/colSums(cm$table))
+  f1_scores <- cm$byClass[,"F1"]
+  
+  conf_array[,,i] <- conf_matrix
+  f1_matrix[i,] <- f1_scores
+}
+
+colnames(f1_matrix) <- names(f1_scores)
+rownames(f1_matrix) <- unique(results$Output_name)
+
+```
+
+visualize confusion matrix
+```{r}
+library(ComplexHeatmap)
+library(viridis)
+library(circlize)
+
+
+col_fun = colorRamp2(c(0,1), c("white","red"))
+
+# hm_list <- NULL
+
+for (i in 1:dim(conf_array)[3]){
+  conf_matrix <- conf_array[,,i]
+  col_anno <- columnAnnotation(f1 = f1_matrix[i,], col = list(f1 = col_fun),
+                               F1 = anno_text(sprintf("%.2f", f1_matrix[i,]), location = 0.5, just = "center",rot = 0))
+
+  hm <- Heatmap(conf_matrix, col = viridis(100),
+                cluster_rows = F,
+                cluster_columns = F,
+                bottom_annotation = col_anno,
+                column_names_side = "top",
+                heatmap_legend_param = list(at = c(0,0.2,0.4,0.6,0.8,1)),
+                show_heatmap_legend = F,
+                column_title = dimnames(conf_array)[[3]][i],
+                cell_fun = function(j, i, x, y, width, height, fill){
+                  grid.text(sprintf("%.2f", conf_matrix[i, j]), x, y, gp = gpar(fontsize = 10))})
+  draw(hm)
+  # hm_list <- hm_list + hm
+}
+
+# hm_list
+
+```
+
+
+visualize f1 scores
+```{r}
+df <- results %>%
+  group_by(Output_name)%>%
+  summarise(crop_input_size = unique(crop_input_size), hierarchy_match = unique(hierarchy_match))
+df <- df[match(rownames(f1_matrix), df$Output_name),]
+
+# create row annotation
+row_anno <- rowAnnotation(
+  crop_input_size = as.factor(df%>%
+    pull(crop_input_size)),
+  hierarchy_match = df %>%
+    pull(hierarchy_match)
+  )
+
+
+Heatmap(f1_matrix, show_column_dend = F, show_row_dend = F, left_annotation = row_anno,
+        heatmap_legend_param = list(title = "F1"),
+        cell_fun = function(j, i, x, y, width, height, fill){
+                  grid.text(sprintf("%.2f", f1_matrix[i, j]), x, y, gp = gpar(fontsize = 10))})
+```
+
+f1 and confusion matrix for combination of models
+```{r}
+# create unique cell id for all cells
+results$unique_id <- paste(results$image_id, results$cell_id)
+  
+# separate dataframe for each model
+model_list <- lapply(unique(results$Output_name),function(model){
+      model_df <- results[results$Output_name == model,]
+      return (model_df)
+    }
+)
+
+names(model_list) <- unique(results$Output_name)
+
+n_outputs <- length(unique(results$Output_name))
+# row = models, col = labels, value = f1
+ens_f1_matrix <- matrix(rep(0, (n_outputs * (n_outputs-1)/2)), nrow = n_outputs * (n_outputs-1)/2, ncol = length(unique(results$label)))
+# average f1 score
+avg_f1_matrix <- matrix(rep(0, ), nrow = n_outputs, ncol = n_outputs)
+# array of confusion matrices
+ens_conf_array <- array(rep(0,length(unique(results$label))*length(unique(results$label))*(n_outputs * (n_outputs-1))/2),
+                    dim = c(length(unique(results$label)),length(unique(results$label)),(n_outputs * (n_outputs-1)/2)),
+                    # dimnames = list(sort(unique(results$label)),sort(unique(results$label)),unique(results$Output_name))
+                    )
+
+count <- 0
+names <- c()
+for (i in 1:length(model_list)){
+  for (j in (i+1):length(model_list)){
+    if (j > length(model_list)) break
+    
+    count <- count + 1
+    df1 <- model_list[[i]]
+    df2 <- model_list[[j]]
+    name <- paste0(names(model_list)[c(i,j)], collapse = ",")
+    names <- c(names,name)
+    
+    # merge df
+    df <- merge(df1, df2, by="unique_id", all = T)
+    
+    # compute pred with max prob
+    df$pred_prob.x[is.na(df$pred_prob.x)] <- 0
+    df$pred_prob.y[is.na(df$pred_prob.y)] <- 0
+    
+    df <- df %>%
+      mutate(max_pred = ifelse(pred_prob.y > pred_prob.x, pred.y, pred.x))
+    
+    # compute all labels
+    df <- df %>%
+      mutate(label = ifelse(is.na(label.x), label.y, label.y))
+    
+    # compute metrics
+    cm <- confusionMatrix(as.factor(df$max_pred), as.factor(df$label),
+              mode = "everything",
+              positive="1")
+    
+    
+    ens_conf_matrix <- t(t(cm$table)/colSums(cm$table))
+    ens_f1_scores <- cm$byClass[,"F1"]
+    
+    ens_conf_array[,,count] <- ens_conf_matrix
+    ens_f1_matrix[count,] <- ens_f1_scores
+    avg_f1_matrix[i,j] <- mean(ens_f1_scores)
+  }
+}
+# assign names
+dimnames(ens_conf_array) <- list(sort(unique(results$label)),
+                                 sort(unique(results$label)),
+                                 names)
+rownames(ens_f1_matrix) <- names
+colnames(ens_f1_matrix) <- sort(unique(results$label))
+
+rownames(avg_f1_matrix) <- colnames(avg_f1_matrix) <- names(model_list)
+
+
+
+```
+
+visualize confusion matrices
+```{r}
+col_fun = colorRamp2(c(0,1), c("white","red"))
+
+# hm_list <- NULL
+
+for (i in 1:dim(ens_conf_array)[3]){
+  ens_conf_matrix <- ens_conf_array[,,i]
+  col_anno <- columnAnnotation(f1 = ens_f1_matrix[i,], col = list(f1 = col_fun),
+                               F1 = anno_text(sprintf("%.2f", ens_f1_matrix[i,]), location = 0.5, just = "center",rot = 0))
+
+  hm <- Heatmap(ens_conf_matrix, col = viridis(100),
+                cluster_rows = F,
+                cluster_columns = F,
+                bottom_annotation = col_anno,
+                column_names_side = "top",
+                heatmap_legend_param = list(at = c(0,0.2,0.4,0.6,0.8,1)),
+                show_heatmap_legend = F,
+                column_title = dimnames(ens_conf_array)[[3]][i],
+                cell_fun = function(j, i, x, y, width, height, fill){
+                  grid.text(sprintf("%.2f", ens_conf_matrix[i, j]), x, y, gp = gpar(fontsize = 10))})
+  draw(hm)
+  # hm_list <- hm_list + hm
+}
+
+
+# hm_list
+
+```
+
+
+visualize f1 scores per ensembles
+```{r}
+df <- results %>%
+  group_by(Output_name)%>%
+  summarise(crop_input_size = unique(crop_input_size), hierarchy_match = unique(hierarchy_match))
+df <- df[match(rownames(f1_matrix), df$Output_name),]
+
+# create row annotation
+row_anno <- rowAnnotation(
+  crop_input_size = as.factor(df%>%
+    pull(crop_input_size)),
+  hierarchy_match = df %>%
+    pull(hierarchy_match)
+  )
+
+
+Heatmap(ens_f1_matrix, show_column_dend = F, show_row_dend = F, # left_annotation = row_anno,
+        heatmap_legend_param = list(title = "F1"),
+        cell_fun = function(j, i, x, y, width, height, fill){
+                  grid.text(sprintf("%.2f", ens_f1_matrix[i, j]), x, y, gp = gpar(fontsize = 10))})
+```
+__there seems to be a problem with low abundant cells__
+```{r}
+library(tibble)
+
+f1_scores <- as.data.frame(rowMeans(t(ens_f1_matrix)))%>%
+  rownames_to_column("label")
+
+ab <- results %>%
+  filter(Output_name == "Output_16") %>%
+  group_by(label)%>%
+  summarise(log_abundance = log(n()))
+
+df <- merge(ab,f1_scores, by = "label")
+
+ggplot(df, aes(x = log_abundance, y = rowMeans(t(ens_f1_matrix)), col = as.factor(label)))+
+  geom_point()+
+  labs(y = "average F1")
+
+# ab[order(ab$abundance),]
+```
+__Cell size seems to have an effect but is managable with crop_input_size__
+```{r}
+size <- results %>%
+  filter(Output_name == "Output_16") %>%
+  group_by(label)%>%
+  summarise(size = mean(area))
+
+df_size <- merge(size,f1_scores, by = "label")
+
+ggplot(df_size, aes(x = size, y = rowMeans(t(ens_f1_matrix)), col = as.factor(label)))+
+  geom_point()+
+  labs(y = "average F1")
+```
+
+
+plot average f1 per ens
+```{r}
+Heatmap(avg_f1_matrix,
+        heatmap_legend_param = list(at = c(0,1), col = c("white,red")),
+        cell_fun = function(j, i, x, y, width, height, fill){
+                  grid.text(sprintf("%.2f", avg_f1_matrix[i, j]), x, y, gp = gpar(fontsize = 10))})
+```
+

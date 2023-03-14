@@ -1,0 +1,67 @@
+---
+title: "Prepare Input for OVA"
+output:
+  workflowr::wflow_html:
+    toc: false
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+
+# Set path
+if (Sys.info()["sysname"] == "Darwin"){
+  mount_path <- "/Volumes/"
+} else if (Sys.info()["sysname"] == "Linux"){
+  mount_path <- "/mnt/"
+} else {
+  stop("Operating system is not supported")
+}
+```
+
+```{r load-libraries, message=FALSE}
+library(cytomapper)
+library(stringr)
+source("code/function_cells2labels.R")
+source("code/function_save2tiff.R")
+source("code/function_data2config.R")
+
+
+sce <- readRDS(paste0(mount_path,"immucan_volume/processed_data/Panel_1/cell_classification/sce_selected.rds"))
+images <- readRDS(paste0(mount_path,"immucan_volume/processed_data/Panel_1/cell_classification/all_images.rds"))
+masks <- readRDS(paste0(mount_path,"immucan_volume/processed_data/Panel_1/cell_classification/all_masks.rds"))
+
+```
+
+Create one Input directory for each celltype
+```{r}
+for (cell_type in unique(sce$cell_labels)){
+  if(!dir.exists(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/OVA/Input_",cell_type))){
+    dir.create(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/OVA/Input_",cell_type,"/"))
+  }
+
+  save2tiff(images,paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/OVA/Input_",cell_type))
+  save2tiff(masks,paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/OVA/Input_",cell_type), masks = T)
+  # take out all cells that are not that cell type
+  sce_cell_type <- sce
+  sce_cell_type$cell_labels[sce_cell_type$cell_labels != cell_type & sce_cell_type$cell_labels != "unlabelled"] <- "not"
+  cells2labels(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/OVA/Input_",cell_type),sce_cell_type, "image", "cell_labels")
+
+  if(!dir.exists(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/OVA/Ouput_",cell_type))){
+  dir.create(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/OVA/Output_",cell_type,"/"))
+  }
+  
+  data2config(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/OVA/Output_",cell_type,"/"),
+            paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/OVA/Input_",cell_type,"/"),
+            # using information from param sweep analysis
+            crop_input_size = 30,
+            epoch_max = 40,
+            lr = 0.005,
+            blacklist = c("DNA1","DNA2","HistoneH3"))
+}
+```
+
+
+
