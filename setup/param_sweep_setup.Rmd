@@ -50,6 +50,7 @@ for (i in 1:length(images_shuffled)){
 sce$k_fold_group <- group[sce$image]
 
 table(sce$k_fold_group)
+table(sce$k_fold_group,sce$cell_labels)
 ```
 
 crop_input_size

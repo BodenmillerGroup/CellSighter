@@ -93,8 +93,10 @@ for (crop in crop_input_size){
     for (l in lr){
       for (hm_name in names(hierarchy_match)){
         count <- count +1
+        # after the first round epoch=80 seem to have a negative effect, due to time reasons it wont be computed in the secound round
+        if (epoch == 80) next
         # select validation set by adding 1 to k from ParamSweep1
-        cur_k <- (hyperparams_1[count,]$val_set + 1)%%k
+        cur_k <- hyperparams_1[count,]$val_set%%k + 1
         
         if(!dir.exists(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/ParamSweep2/Model_",count,"/"))){
           dir.create(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/ParamSweep2/Model_",count,"/"))

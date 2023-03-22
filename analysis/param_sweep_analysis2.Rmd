@@ -1,5 +1,5 @@
 ---
-title: "Param sweep analysis"
+title: "Param sweep analysis 2"
 output:
   workflowr::wflow_html:
     toc: false
@@ -28,33 +28,60 @@ library(dplyr)
 library(SummarizedExperiment)
 library(readxl)
 library(tidyverse)
+library(tidyr)
 
 # load sce
 sce <- readRDS(paste0(mount_path,"immucan_volume/processed_data/Panel_1/cell_classification/sce_selected.rds"))
 
 # load results
-results <- lapply(list.dirs(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/ParamSweep/")),function(x){
+results_2 <- lapply(list.dirs(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/ParamSweep2/")),function(x){
   if(file.exists(paste0(x,"/val_results.csv"))){
     output <- str_extract(x,"Model_[0-9]{1,2}")
     df <- read.csv(paste0(x,"/val_results.csv"))
     df$Output_name <- rep(output,nrow(df))
+    df$Param_sweep <- rep(2,nrow(df))
     df <- df[,-c(1)]
     return (df)
     }
   }
 )
 
-results <- bind_rows(results)
+results <- bind_rows(results_2)
+
+results_1 <- lapply(list.dirs(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/ParamSweep/")),function(x){
+  if(file.exists(paste0(x,"/val_results.csv"))){
+    output <- str_extract(x,"Model_[0-9]{1,2}")
+    if (output %in% unique(results$Output_name)){
+      df <- read.csv(paste0(x,"/val_results.csv"))
+      df$Output_name <- rep(output,nrow(df))
+      df$Param_sweep <- rep(1,nrow(df))
+      df <- df[,-c(1)]
+      return (df)  
+      }
+    }
+  }
+)
+
+results <- bind_rows(results,results_1)
 results$label <- as.character(results$label)
 
 # load hyperparam dataframe
-hyperparams <- read.csv("data/hyperparams.csv")
-hyperparams$X <- NULL
-rownames(hyperparams) <- hyperparams$Model_name
-hyperparams$val_set <- as.factor(hyperparams$val_set)
-hyperparams$crop_input_size <- as.factor(hyperparams$crop_input_sizue)
+hyperparams_1 <- read.csv("data/hyperparams.csv")
+hyperparams_1$X <- NULL
+hyperparams_1$Param_sweep <- rep(1,nrow(hyperparams_1))
+hyperparams_1$crop_input_size <- as.factor(hyperparams_1$crop_input_sizue)
 # correct spelling mistake
-hyperparams$crop_input_sizue <- NULL
+hyperparams_1$crop_input_sizue <- NULL
+
+hyperparams_2 <- read.csv("data/hyperparams2.csv")
+hyperparams_2$X <- NULL
+hyperparams_2$Param_sweep <- rep(2,nrow(hyperparams_2))
+
+hyperparams <- rbind(hyperparams_1,hyperparams_2)
+
+
+rownames(hyperparams) <- paste0(hyperparams$Model_name,hyperparams$Param_sweep)
+hyperparams$val_set <- as.factor(hyperparams$val_set)
 hyperparams$epoch_max <- as.factor(hyperparams$epoch_max)
 hyperparams$lr <- as.factor(hyperparams$lr)
 
@@ -72,7 +99,6 @@ dic["-1"] <- "unlabelled"
 
 results$pred <- dic[as.character(results$pred)]
 results$label <- dic[as.character(results$label)]
-
 ```
 
 
@@ -217,7 +243,9 @@ names(col_vec_hierarchy) = unique(hyperparams$hierarchy_match)
 
 # create hyperparams row annotation
 hyperparams$crop_input_size <- as.factor(hyperparams$crop_input_size)
-ha = rowAnnotation(df = hyperparams[hyperparams$Model_name %in% rownames(f1_matrix),][rownames(f1_matrix),]%>%select(-Model_name),
+ha = rowAnnotation(df = hyperparams[hyperparams$Model_name %in% rownames(f1_matrix),]%>%
+                     filter(Param_sweep == 2)%>%
+                     select(-Model_name),
                    col = list(val_set = col_vec_val_set,
                               crop_input_size = col_vec_crop_input_size,
                               epoch_max = col_vec_epoch_max,
@@ -271,7 +299,7 @@ ggplot(results%>%
 ggplot(results%>%
          group_by(label,crop_input_size)%>%
          summarise(radius = mean(sqrt(area/pi)),accuracy = sum(correct)/n(), crop_input_size = unique(crop_input_size))%>%
-         filter(!label%in%c(-1,13)),
+         filter(!label%in%c("Unlabelled","Tumor")),
        aes(x = radius, y= accuracy, col = as.factor(crop_input_size)))+
   geom_point() +
   theme_bw() +
