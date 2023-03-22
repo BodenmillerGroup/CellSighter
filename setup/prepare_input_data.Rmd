@@ -46,7 +46,7 @@ save2tiff(masks,paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSig
 
 extract and save labels
 ```{r}
-cells2labels(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Input/"),sce, "image", "cell_labels")
+cells2labels(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Input/"),sce, "image", "ObjectNumber", "cell_labels")
 ```
 
 

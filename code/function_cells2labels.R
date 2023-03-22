@@ -1,4 +1,4 @@
-cells2labels <- function(root_dir, sce, image_id_col, cell_label_col, non_labelled="unlabelled"){
+cells2labels <- function(root_dir, sce, image_id_col, cell_id_col, cell_label_col, non_labelled="unlabelled"){
   # create directory if necessary
   if(!dir.exists(paste0(root_dir,"/CellTypes/cells2labels"))){
     dir.create(paste0(root_dir,"/CellTypes/cells2labels"),recursive = TRUE)
@@ -35,37 +35,23 @@ cells2labels <- function(root_dir, sce, image_id_col, cell_label_col, non_labell
 
   # create cells2labels file for all images contained in the sce
   print(paste0("Creating cells2labels for ",length(unique(sce$image_id_col))," images"))
+
   images <- lapply(unique(sce$image_id_col), function(x){
     #select one image
     cur_sce <- sce[,sce$image_id_col == x]
-    # extract object number and cell label
-    df <- data.frame(ObjectNumber = cur_sce$ObjectNumber, CellLabel = cur_sce$cell_labels)
-    # make sure rows are ordered by object number
-    df <- df[order(df$ObjectNumber),]
-    # store as txt file: where object number is represented by the index of the row
-    ## assign numeric label
-    df$label <- dic[df$CellLabel]
-    #TODO: how to make sure all cells in there? If possibly cell with highest ObjectNumber were excluded
-    nr_lines = 1
-    # start with empty row because of python indexing
-    final_string <- "-1\n"
-    # iterate over all cells
-    for (object_nr in df$ObjectNumber){
-      # if cell is missing, fill in rows with -1
-      if (object_nr > nr_lines){
-        dif <- object_nr - nr_lines
-        add_string <- rep("-1\n",dif)
-        final_string <- paste0(final_string,add_string)
-        nr_lines <- nr_lines + dif
-      }
-      # add cellLabel at correct row number
-      final_string <- paste0(final_string, df$label[df$ObjectNumber == object_nr],"\n")
-      nr_lines <- nr_lines + 1
-    }
+
+    # create empty dataframe with nrow() = max(ObjectNumber)
+    df <- as.data.frame(matrix(rep(NA,max(cur_sce$ObjectNumber)+1)))
+    df[colData(cur_sce)[,cell_id_col]+1,] <- dic[colData(cur_sce)[,cell_label_col]]
+    df[is.na(df$V1),] <- -1
 
     # save as txt
-    writeLines(final_string,con=paste0(root_dir,"/CellTypes/cells2labels/",x,".txt"),sep="")
-    return (paste0(root_dir,"/CellTypes/cells2labels/",x,".txt"))
+    if(endsWith(x,".tiff")){
+      x <- gsub(".tiff","",x)
+    }
+    path <- paste0(root_dir,"/CellTypes/cells2labels/",x,".txt")
+    write.table(df, file = path, row.names = F, col.names = F)
+    return (path)
   })
 
   return (images)
