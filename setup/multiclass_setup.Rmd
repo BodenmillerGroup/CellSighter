@@ -21,12 +21,20 @@ if (Sys.info()["sysname"] == "Darwin"){
 }
 ```
 
+```{r}
+source("code/function_cells2labels.R")
+source("code/function_save2tiff.R")
+source("code/function_data2config.R")
+```
+
+
 Create 10 models to replicate CellSighter Paper
 ```{r}
 if(!dir.exists(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Multiclass"))){
     dir.create(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Multiclass"))
   }
 
+hm <- c("0"="Immune", "1"="Immune", "2"="Immune", "3"="Immune", "4"="Immune", "5"="Immune", "6"="Immune", "7"="Other", "8"="Immune", "9"="Immune", "10"="Immune", "11"="Immune", "12"="Immune", "13"="Other", "-1"="Other")
 
 for (i in seq(1,10)){
   if(!dir.exists(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Multiclass/Model_",i))){
@@ -37,8 +45,9 @@ for (i in seq(1,10)){
             # use data prepared by prepare_input_data.Rmd
             paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Input/"),
             # using information from param sweep analysis
-            crop_input_size = 30,
-            epoch_max = 60,
+            hierarchy_match = hm,
+            crop_input_size = 40,
+            epoch_max = 50,
             lr = 0.005,
             blacklist = c("DNA1","DNA2","HistoneH3"))
 }

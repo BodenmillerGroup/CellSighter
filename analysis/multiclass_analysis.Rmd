@@ -26,8 +26,8 @@ load data
 ```{r}
 sce <- readRDS(paste0(mount_path,"immucan_volume/processed_data/Panel_1/cell_classification/sce_selected.rds"))
 
-# import merged results created with many2one.py
-df <- read.csv(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Multiclass/merged_results.csv"))
+# import merged results created with unified_ensemble.py
+df <- read.csv(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Multiclass/merged_ensemble.csv"))
 df$X <- NULL
 ```
 
@@ -45,12 +45,35 @@ Confusion matrix
 ```{r}
 library(caret)
 
-# change name so levels fit between reference and predictions
-results$final_pred[results$final_pred == "undefined"] <- "unlabelled"
+# create dictionary for translation between cell type id and cell type label
+# create label to label-id dictionary, set unlabeled to -1
+dic <- c()
+labels <- sort(unique(sce$cell_labels))
+labels <- labels[labels != "unlabelled"]
 
-cm <- confusionMatrix(as.factor(results$final_pred), as.factor(results$label),
+for (i in 1:length(labels)){
+  dic[as.character(i-1)] <- labels[[i]]
+}
+dic["-1"] <- "unlabelled"
+
+results$pred <- dic[as.character(results$pred)]
+results$label <- dic[as.character(results$label)]
+
+
+cm <- confusionMatrix(as.factor(results$pred), as.factor(results$label),
                 mode = "everything")
 
+data.frame(cm$byClass) %>%
+    mutate(class = sub("Class: ", "", rownames(cm$byClass))) %>%
+    ggplot() + 
+    geom_point(aes(1 - Specificity, Sensitivity, 
+                   size = Detection.Rate,
+                   fill = class),
+               shape = 21) + 
+    scale_fill_manual(values = metadata(sce)$colour_vectors$cell_types) + 
+    theme_bw() +
+    ylab("Sensitivity (TPR)") +
+    xlab("1 - Specificity (FPR)")
 
 conf_matrix <- t(t(cm$table)/colSums(cm$table))
 f1_scores <- cm$byClass[,"F1"]
@@ -81,6 +104,54 @@ hm <- Heatmap(conf_matrix, col = viridis(100),
                 grid.text(sprintf("%.2f", conf_matrix[i, j]), x, y, gp = gpar(fontsize = 10))})
 
 hm
+```
+
+Individual model analysis
+```{r}
+# load results
+per_model <- lapply(list.dirs(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Multiclass/")),function(x){
+  if(file.exists(paste0(x,"/val_results.csv"))){
+    output <- str_extract(x,"Model_[0-9]{1,2}")
+    df <- read.csv(paste0(x,"/val_results.csv"))
+    df$Output_name <- rep(output,nrow(df))
+    df <- df[,-c(1)]
+    return (df)
+    }
+  }
+)
+
+per_model <- bind_rows(per_model)
+per_model$label <- as.character(per_model$label)
+per_model$pred <- dic[as.character(per_model$pred)]
+per_model$label <- dic[as.character(per_model$label)]
+```
+
+```{r}
+cm_list <- lapply(unique(per_model$Output_name), function(model){
+  df <- per_model[per_model$Output_name == model,]
+  cm <- confusionMatrix(as.factor(df$pred), as.factor(df$label),
+                mode = "everything")
+  
+  cm_df <- data.frame(cm$byClass) %>%
+    mutate(Output_name = rep(model,nrow(cm$byClass))) %>%
+    mutate(class = sub("Class: ", "", rownames(cm$byClass)))
+  return (cm_df)
+})
+
+cm_df <- bind_rows(cm_list)
+  
+  
+cm_df%>%
+  ggplot() + 
+  geom_point(aes(1 - Specificity, Sensitivity, 
+                 size = Detection.Rate,
+                 fill = class),
+             shape = 21) + 
+  scale_fill_manual(values = metadata(sce)$colour_vectors$cell_types) + 
+  theme_bw() +
+  facet_wrap(~Output_name) +
+  ylab("Sensitivity (TPR)") +
+  xlab("1 - Specificity (FPR)")
 ```
 
 
