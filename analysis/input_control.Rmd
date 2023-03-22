@@ -1,0 +1,135 @@
+---
+title: "Control Input"
+output:
+  workflowr::wflow_html:
+    toc: false
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+
+# Set path
+if (Sys.info()["sysname"] == "Darwin"){
+  mount_path <- "/Volumes/"
+} else if (Sys.info()["sysname"] == "Linux"){
+  mount_path <- "/mnt/"
+} else {
+  stop("Operating system is not supported")
+}
+```
+
+read in data
+```{r}
+library(stringr)
+library(dplyr)
+library(SummarizedExperiment)
+library(readxl)
+library(tidyverse)
+
+# load sce
+sce <- readRDS(paste0(mount_path,"immucan_volume/processed_data/Panel_1/cell_classification/sce_selected.rds"))
+
+input_labels <- lapply(list.files(paste0(mount_path, "immucan_volume/processed_data/Panel_1/CellSighter/Input/CellTypes/cells2labels/")), function(x){
+  df <- read.csv(paste0(mount_path, "immucan_volume/processed_data/Panel_1/CellSighter/Input/CellTypes/cells2labels/",x), header=F)
+  df$label <- df$V1
+  df$V1 <- NULL
+  df$image_id <- rep(gsub(".txt","",x), nrow(df))
+  df$ObjectNumber <- seq(0,nrow(df)-1)
+  return (df)
+})
+
+input_labels <- bind_rows(input_labels)
+input_labels$unique_id <- paste0(input_labels$image_id,"_",input_labels$ObjectNumber)
+
+sce_labels <- as.data.frame(colData(sce))
+sce_labels$image <- gsub(".tiff","",sce_labels$image)
+sce_labels$unique_id <- paste0(sce_labels$image,"_",sce_labels$ObjectNumber)
+
+sum(is.na(input_labels$label))
+```
+
+```{r}
+# create dictionary for translation between cell type id and cell type label
+# create label to label-id dictionary, set unlabeled to -1
+dic <- c()
+labels <- sort(unique(sce$cell_labels))
+labels <- labels[labels != "unlabelled"]
+
+for (i in 1:length(labels)){
+  dic[as.character(i-1)] <- labels[[i]]
+}
+dic["-1"] <- "unlabelled"
+
+input_labels$label <- dic[as.character(input_labels$label)]
+```
+
+
+
+```{r}
+df <- merge(sce_labels,input_labels,by="unique_id")
+
+
+list_images <- c()
+for (image in unique(df$image)){
+  curr_df <- df[df$image == image,]
+  if (!all(curr_df$label == curr_df$cell_labels)){
+      print(image)
+      print(table(curr_df$cell_labels, curr_df$label))
+      
+      list_images <- c(list_images,image)
+  }
+
+}
+
+table(df$cell_labels,df$label)
+```
+
+
+```{r}
+
+df$correct <- df$label == df$cell_labels
+
+inc <- df %>%
+  filter(image %in% list_images) %>%
+  group_by(image,correct) %>%
+  summarise(min = min(ObjectNumber.x), max = max(ObjectNumber.x), range = max - min + 1, incorrect = sum(!correct)) %>%
+  filter(correct == FALSE)
+
+
+sum(inc$incorrect)
+inc
+```
+
+```{r}
+
+a <- input_labels[input_labels$image_id == "10068190-SPECT-VAR-TIS-01-IMC-01_001",]
+b <- colData(sce)[sce$image == "10068190-SPECT-VAR-TIS-01-IMC-01_001.tiff",]
+
+c <- as.data.frame(merge(a,b,by="ObjectNumber")) %>%
+  select(image,ObjectNumber,cell_labels,label)
+
+c$trans <- dic[as.character(c$label)]
+
+df %>%
+  filter(image == "10068190-SPECT-VAR-TIS-01-IMC-01_001")%>%
+  select(ObjectNumber.x, cell_labels, label) %>%
+  arrange(desc(ObjectNumber.x))
+  
+df %>%
+  filter(image == "10068190-SPECT-VAR-TIS-01-IMC-01_001", correct == FALSE)
+
+max(df %>%
+      filter(image == "10068190-SPECT-VAR-TIS-01-IMC-01_001")%>%
+      pull(ObjectNumber.x))
+  
+
+tail(df%>%
+       arrange(ObjectNumber.x) %>%
+       filter(image == "10068190-SPECT-VAR-TIS-01-IMC-01_001"))
+
+
+```
+
