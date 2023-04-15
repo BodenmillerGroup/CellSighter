@@ -44,10 +44,14 @@ for (cell_type in unique(sce$cell_labels)){
 
   save2tiff(images,paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/OVA/Input_",cell_type))
   save2tiff(masks,paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/OVA/Input_",cell_type), masks = T)
+  
   # take out all cells that are not that cell type
   sce_cell_type <- sce
   sce_cell_type$cell_labels[sce_cell_type$cell_labels != cell_type & sce_cell_type$cell_labels != "unlabelled"] <- "not"
-  cells2labels(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/OVA/Input_",cell_type),sce_cell_type, "image", "cell_labels")
+  cells2labels(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/OVA/Input_",cell_type),sce_cell_type,
+               "image",
+               "ObjectNumber",
+               "cell_labels")
 
   if(!dir.exists(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/OVA/Ouput_",cell_type))){
   dir.create(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/OVA/Output_",cell_type,"/"))
@@ -56,7 +60,7 @@ for (cell_type in unique(sce$cell_labels)){
   data2config(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/OVA/Output_",cell_type,"/"),
             paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/OVA/Input_",cell_type,"/"),
             # using information from param sweep analysis
-            crop_input_size = 30,
+            crop_input_size = 40,
             epoch_max = 40,
             lr = 0.005,
             blacklist = c("DNA1","DNA2","HistoneH3"))

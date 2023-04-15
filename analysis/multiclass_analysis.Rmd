@@ -33,17 +33,16 @@ df$X <- NULL
 
 
 ```{r}
+library(stringr)
+library(dplyr)
+library(tidyverse)
 # create unique cell id for all cells
 df$unique_id <- paste0(df$image_id, df$cell_id)
 sce$unique_id <- paste0(str_split(sce$image,".tiff", simplify = T)[,1],sce$ObjectNumber)
 
-# merge data with sce
-results <- as.data.frame(merge(df,colData(sce),by="unique_id"))
-```
-
-Confusion matrix
-```{r}
-library(caret)
+# merge data with sce and sort
+results <- as.data.frame(colData(sce)) %>%
+  inner_join(df, by= intersect(colnames(df),colnames(colData(sce))))
 
 # create dictionary for translation between cell type id and cell type label
 # create label to label-id dictionary, set unlabeled to -1
@@ -59,6 +58,22 @@ dic["-1"] <- "unlabelled"
 results$pred <- dic[as.character(results$pred)]
 results$label <- dic[as.character(results$label)]
 
+# add results to sce
+sce <- sce[,sce$unique_id %in% results$unique_id]
+
+for (feature in colnames(results)){
+  if (!feature %in% colnames(colData(sce))){
+    colData(sce)[,feature] <- results[,feature]
+  }
+}
+```
+
+Confusion matrix
+```{r, fig.height=3,fig.width=3}
+library(caret)
+
+
+
 
 cm <- confusionMatrix(as.factor(results$pred), as.factor(results$label),
                 mode = "everything")
@@ -72,6 +87,7 @@ data.frame(cm$byClass) %>%
                shape = 21) + 
     scale_fill_manual(values = metadata(sce)$colour_vectors$cell_types) + 
     theme_bw() +
+    theme(text = element_text(size = 10)) +
     ylab("Sensitivity (TPR)") +
     xlab("1 - Specificity (FPR)")
 
@@ -88,7 +104,7 @@ library(viridis)
 
 col_fun = colorRamp2(c(0,1), c("white","red"))
 col_anno <- columnAnnotation(f1 = f1_scores, col = list(f1 = col_fun),
-                             F1 = anno_text(sprintf("%.2f", f1_scores), location = 0.5, just = "center",rot = 0))
+                             F1 = anno_text(sprintf("%.2f", f1_scores), location = 0.5, just = "center",rot = 0, gp = gpar(fontsize = 10)))
 
 hm <- Heatmap(conf_matrix, col = viridis(100),
               column_title = "Label",
@@ -142,6 +158,7 @@ cm_df <- bind_rows(cm_list)
   
   
 cm_df%>%
+  filter(class != "unlabelled") %>%
   ggplot() + 
   geom_point(aes(1 - Specificity, Sensitivity, 
                  size = Detection.Rate,
@@ -154,5 +171,570 @@ cm_df%>%
   xlab("1 - Specificity (FPR)")
 ```
 
+Prepare for spatial characterization of wrong labelled cells
+```{r}
+library(imcRtools)
+
+# create label-prediction column
+sce$label_pred <- paste0(sce$label,"_", sce$pred)
+sce$correct <- as.numeric(sce$label == sce$pred)
+
+sce <- buildSpatialGraph(sce, "image", type = "expansion", threshold = 20,
+                         coords = c("Pos_X","Pos_Y"))
+
+sce <- aggregateNeighbors(sce, "expansion_interaction_graph", count_by = "label")
+
+sce <- aggregateNeighbors(sce, "expansion_interaction_graph", aggregate_by = "expression",
+                          assay_type = "exprs")
+
+assay <- t(as.matrix(sce$mean_aggregatedExpression[,rownames(sce)]))
+colnames(assay) <- colnames(sce)
+assay[is.na(assay)] <- 0
+assay(sce, "mean_neighbor_expression") <- assay
+
+```
+
+__deper look into the high FPR of tumor and mural cells__ 
+```{r}
+fpr <- results %>%
+  filter((pred == "Mural" | pred == "Tumor") & (pred != label))
+
+table(fpr$label, fpr$pred)
+
+```
+
+Expression matrix of cells wrongly classified as tumor cells
+```{r, fig.height=15, fig.width=10}
+library(scuttle)
+library(dittoSeq)
+
+
+sce_tumor <- sce[,sce$pred == "Tumor" & sce$label != "Tumor" & sce$label != "unlabelled"]
+wrong_tumor <- aggregateAcrossCells(sce_tumor, sce_tumor$label, statistics = "mean", use.assay.type = "exprs")
+
+
+dittoHeatmap(sce_tumor, 
+             genes = rownames(sce_tumor)[rowData(sce_tumor)$use_channel],
+             assay = "exprs", scale = "none",
+             heatmap.colors = viridis(100),
+             annot.by = "label", "pred",
+             order.by = "label")
+
+dittoHeatmap(wrong_tumor,
+             genes = rownames(wrong_tumor),
+             assay = "exprs", scale = "none",
+             heatmap.colors = viridis(100),
+             cell.names.meta = "label",
+             cluster_cols = TRUE
+             )
+```
+
+Expression matrix of cells wrongly classified as mural cells
+```{r, fig.height=15, fig.width=10}
+sce_mural <- sce[,sce$pred == "Mural" & sce$label != "Mural" & sce$label != "unlabelled"]
+wrong_mural <- aggregateAcrossCells(sce_mural, sce_mural$label, statistics = "mean", use.assay.type = "exprs")
+
+
+dittoHeatmap(sce_mural, 
+             genes = rownames(sce_mural)[rowData(sce_mural)$use_channel],
+             assay = "exprs", scale = "none",
+             heatmap.colors = viridis(100),
+             annot.by = c("label", "pred","Indication"),
+             order.by = "label")
+
+dittoHeatmap(wrong_mural, 
+             genes = rownames(wrong_mural),
+             assay = "exprs", scale = "none",
+             heatmap.colors = viridis(100),
+             cell.names.meta = "label",
+             cluster_cols = TRUE
+             )
+```
+
+Compare expression of wrongly classified cells to correctly classified expression
+```{r, fig.height=10, fig.width=10}
+for (ct in unique(sce$cell_labels)){
+  cur_sce <- sce[,startsWith(sce$label_pred,paste0(ct,"_"))]
+  
+  agg <- aggregateAcrossCells(cur_sce, cur_sce$label_pred, statistics = "mean", use.assay.type = "exprs")
+  
+  dittoHeatmap(agg, 
+             main = paste(unique(agg$label)),
+             genes = rownames(agg)[rowData(agg)$use_channel],
+             assay = "exprs", scale = "none",
+             heatmap.colors = viridis(100),
+             cell.names.meta = "label_pred",
+             cluster_cols = TRUE
+             )
+  
+}
+
+```
+
+```{r, fig.height=30, fig.width=15}
+library(BiocNeighbors)
+library(BiocParallel)
+library(scater)
+library(cowplot)
+
+cur_sce <- sce[,sce$cell_labels != "unlabelled"]
+
+plot_list <- list()
+count <- 0
+
+len <- length(unique(cur_sce$cell_labels))
+for (i in seq(1,len-1)){
+  for (j in seq(i+1,len)){
+    ct1 <- unique(cur_sce$cell_labels)[i]
+    ct2 <- unique(cur_sce$cell_labels)[j]
+    
+    correct_ct1 <- paste0(ct1,"_",ct1)
+    correct_ct2 <- paste0(ct2,"_",ct2)
+    between_1 <- paste0(ct1,"_",ct2)
+    between_2 <- paste0(ct2, "_", ct1)
+
+    cur <- cur_sce[,(cur_sce$label_pred == correct_ct1) | (cur_sce$label_pred == correct_ct2) | (cur_sce$label_pred == between_1) | (cur_sce$label_pred == between_2) ]
+    
+    cur <- runUMAP(cur, exprs_values = "exprs", 
+                     subset_row = !(grepl("DNA|Histone", rownames(cur))),
+               external_neighbors = TRUE, BNPARAM = AnnoyParam(),
+               BPPARAM = MulticoreParam(RNGseed = 12345))
+
+    plot <- dittoDimPlot(cur, var = "label_pred",
+               reduction.use = "UMAP", size = 0.2,
+               do.label = TRUE) +
+      ggtitle(paste0(ct1," - ", ct2))
+    
+      count <- count + 1
+    plot_list[[count]] <- plot
+    names(plot_list)[count] <- paste0(ct1," - ", ct2)
+  }
+}
+
+plot_grid(plotlist = plot_list, ncol = 4)
+```
+
+
+
+Compare environmental expression of wrongly classified cells to correctly classified
+```{r, fig.height=10, fig.width=10}
+for (ct in unique(sce$cell_labels)){
+  cur_sce <- sce[,startsWith(sce$label_pred,paste0(ct,"_"))]
+  
+  agg <- aggregateAcrossCells(cur_sce, cur_sce$label_pred, statistics = "mean", use.assay.type = "mean_neighbor_expression")
+  
+  dittoHeatmap(agg, 
+             main = paste(unique(agg$label)),
+             genes = rownames(agg)[rowData(agg)$use_channel],
+             assay = "mean_neighbor_expression", scale = "none",
+             heatmap.colors = viridis(100),
+             cell.names.meta = "label_pred",
+             cluster_cols = TRUE
+             )
+  
+}
+
+```
+
+Compare environment of correctly labeled cells to the environment of wrongly labeled ones
+
+```{r, fig.height=10, fig.width=10}
+library(BiocNeighbors)
+library(BiocParallel)
+library(scater)
+
+cur_sce <- sce[,sce$cell_labels != "unlabelled"]
+
+plot_list_env <- list()
+count <- 0
+
+len <- length(unique(cur_sce$cell_labels))
+for (i in seq(1,len-1)){
+  for (j in seq(i+1,len)){
+    ct1 <- unique(cur_sce$cell_labels)[i]
+    ct2 <- unique(cur_sce$cell_labels)[j]
+    
+    correct_ct1 <- paste0(ct1,"_",ct1)
+    correct_ct2 <- paste0(ct2,"_",ct2)
+    between_1 <- paste0(ct1,"_",ct2)
+    between_2 <- paste0(ct2, "_", ct1)
+
+    cur <- cur_sce[,(cur_sce$label_pred == correct_ct1) | (cur_sce$label_pred == correct_ct2) | (cur_sce$label_pred == between_1) | (cur_sce$label_pred == between_2) ]
+    
+    cur <- runUMAP(cur, exprs_values = "mean_neighbor_expression", 
+                     subset_row = !(grepl("DNA|Histone", rownames(cur))),
+               external_neighbors = TRUE, BNPARAM = AnnoyParam(),
+               BPPARAM = MulticoreParam(RNGseed = 12345))
+
+    plot <- dittoDimPlot(cur, var = "label_pred",
+               reduction.use = "UMAP", size = 0.2,
+               do.label = TRUE) +
+      ggtitle(paste0(ct1," - ", ct2))
+    
+    count <- count + 1
+    plot_list_env[[count]] <- plot
+  }
+
+}
+
+plot_grid(plotlist = plot_list_env, ncol = 4)
+
+```
+
+TODO:  compute distance in expression, environment, and cell type fraction (for all markers and only relevant markers)
+
+compute distance between cells of incorrect label to correct label and predicted label in expression space
+```{r}
+euclidean_dist <- function(x, y) sqrt(sum((x - y)^2))
+
+
+df <- as.data.frame(t(assay(cur_sce, "exprs"))) %>%
+  select(-c(DNA1, DNA2, HistoneH3))
+
+df$pred <- cur_sce$pred
+df$label <- cur_sce$label
+df$label_pred <- cur_sce$label_pred
+df$correct <- cur_sce$correct
+
+# compute mean expression value of correctly labeled cells per celltype
+label_mean <- df%>%
+  filter(correct == 1) %>%
+  group_by(label) %>%
+  summarise(across(where(is.numeric), ~ mean(.x, na.rm = TRUE))) %>%
+  select(-c(correct))
+
+df <- df%>%
+  left_join(label_mean, by = "label", suffix = c("_cell","_label"))
+
+label_mean <- label_mean %>%
+  rename_with(~ paste0(.x, "_pred"))
+
+df <- df %>%
+  left_join(label_mean, by = join_by("pred" == "label_pred"))
+
+
+distances_to_label <- c()
+distances_to_pred <- c()
+for (i in 1:nrow(df)){
+  cell <- df[i,] %>%
+    select(ends_with("_cell")) %>%
+    as.numeric()
+  
+  label <- df[i,] %>%
+    select(ends_with("_label")) %>%
+    as.numeric()
+  
+  pred <- df[i,] %>%
+    select(ends_with("_pred")) %>%
+    select(-c(label_pred)) %>%
+    as.numeric()
+    
+  
+  dist_to_label <- euclidean_dist(cell,label)
+  dist_to_pred <- euclidean_dist(cell,pred)
+  
+  distances_to_label <- c(distances_to_label, dist_to_label)
+  distances_to_pred <- c(distances_to_pred, dist_to_pred)
+}
+
+df$dist_to_label <- distances_to_label
+df$dist_to_pred <- distances_to_pred
+ 
+
+expression_similarity <- df %>%
+  filter(correct == 0) %>%
+  group_by(label_pred) %>%
+  summarise(label = unique(label), pred = unique(pred), dist_to_label = mean(dist_to_label), dist_to_pred = mean(dist_to_pred), n = n()) %>%
+  mutate(similarity = dist_to_label - dist_to_pred, similar_to_prediction = similarity > 0)
+
+
+ggplot(expression_similarity %>%
+         filter(n > 10), aes(x=reorder(label_pred, similarity), y=similarity, fill = similar_to_prediction)) +
+  geom_bar(stat='identity') +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  # coord_flip() +
+  facet_grid(~label, scales = "free_x", drop = TRUE) +
+  xlab("label - prediction") +
+  ggtitle("Label")
+
+```
+# cell type relevant markers
+```{r}
+markers <- list()
+
+# tumor markers
+markers[["Tumor"]] <- rownames(sce)[grepl(pattern = "Ecad|CD3|CarbonicAnhydrase|HLADR|MPO|CD20|CD303|CD38|SMA|PDGFRb",rownames(sce))]
+
+markers[["MacCD163"]] <- rownames(sce)[grepl(pattern = "CD20|HLADR|CD3|CD303|CD38|CD7|CD163|CD11c",rownames(sce))]
+
+markers[["HLADR"]] <- rownames(sce)[grepl(pattern = "CD20|HLADR|CD3|CD303|CD38|CD7|CD163|CD11c",rownames(sce))]
+
+markers[["DC"]] <- rownames(sce)[grepl(pattern = "CD20|HLADR|CD3|CD303|CD38|CD7|CD163|CD11c",rownames(sce))]
+
+
+markers[["pDC"]] <- rownames(sce)[grepl(pattern = "Ecad|CD303",rownames(sce))]
+
+markers[["Neutrophil"]] <- rownames(sce)[grepl(pattern = "MPO|CD15",rownames(sce))]
+
+markers[["plasma"]] <- rownames(sce)[grepl(pattern = "CD303|CD38|CD7|CD11c",rownames(sce))]
+
+
+markers[["Mural"]] <- rownames(sce)[grepl(pattern = "CD3|Ecad|CD38|CD20|CD303|MPO|CD7|HLADR|SMA",rownames(sce))]
+
+
+markers[["B"]] <- rownames(sce)[grepl(pattern = "CD20|CD3|CD11c|CD303",rownames(sce))]
+
+markers[["BnT"]] <- rownames(sce)[grepl(pattern = "CD20|CD3|CD11c|CD303",rownames(sce))]
+
+markers[["NK"]] <- rownames(sce)[grepl(pattern = "CD7|Ecad|CD3",rownames(sce))]
+
+markers[["CD4"]] <- rownames(sce)[grepl(pattern = "CD3|CD20|CD11c|CD303|FOXP3|CD8|CD4",rownames(sce))]
+
+markers[["CD8"]] <- rownames(sce)[grepl(pattern = "CD3|CD20|CD11c|CD303|FOXP3|CD8|CD4",rownames(sce))]
+
+markers[["Treg"]] <- rownames(sce)[grepl(pattern = "CD3|CD20|CD11c|CD303|FOXP3",rownames(sce))]
+```
+
+in relevant marker space
+```{r}
+library(stringr)
+df <- as.data.frame(t(assay(cur_sce, "exprs"))) %>%
+  select(-c(DNA1, DNA2, HistoneH3))
+
+df$id <- colnames(cur_sce)
+df$pred <- cur_sce$pred
+df$label <- cur_sce$label
+df$label_pred <- cur_sce$label_pred
+df$correct <- cur_sce$correct
+
+# compute mean expression value of correctly labeled cells per celltype
+label_mean <- df%>%
+  filter(correct == 1) %>%
+  group_by(label) %>%
+  summarise(across(where(is.numeric), ~ mean(.x, na.rm = TRUE))) %>%
+  select(-c(correct))
+
+df <- df%>%
+  left_join(label_mean, by = "label", suffix = c("_cell","_label"))
+
+label_mean <- label_mean %>%
+  rename_with(~ paste0(.x, "_pred"))
+
+df <- df %>%
+  left_join(label_mean, by = join_by("pred" == "label_pred"))
+
+
+distances_to_label <- c()
+distances_to_pred <- c()
+for (i in 1:nrow(df)){
+  
+  row <- df[i,]
+  relevant_markers <- markers[[row$label]]
+  
+  row <- row[,str_split(colnames(row),"_",simplify = TRUE)[,1] %in% relevant_markers]
+  
+  cell <- row %>%
+    select(ends_with("_cell")) %>%
+    as.numeric()
+  
+  label <- row %>%
+    select(ends_with("_label")) %>%
+    as.numeric()
+  
+  pred <- row %>%
+    select(ends_with("_pred")) %>%
+    as.numeric()
+    
+  
+  dist_to_label <- euclidean_dist(cell,label)
+  dist_to_pred <- euclidean_dist(cell,pred)
+  
+  distances_to_label <- c(distances_to_label, dist_to_label)
+  distances_to_pred <- c(distances_to_pred, dist_to_pred)
+}
+
+df$dist_to_label <- distances_to_label
+df$dist_to_pred <- distances_to_pred
+ 
+
+expression_similarity <- df %>%
+  filter(correct == 0) %>%
+  group_by(label_pred) %>%
+  summarise(label = unique(label), pred = unique(pred), dist_to_label = mean(dist_to_label), dist_to_pred = mean(dist_to_pred), n = n()) %>%
+  mutate(similarity = dist_to_label - dist_to_pred, similar_to_prediction = similarity > 0)
+
+
+ggplot(expression_similarity %>%
+         filter(n > 10), aes(x=reorder(label_pred, similarity), y=similarity, fill = similar_to_prediction)) +
+  geom_bar(stat='identity') +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  # coord_flip() +
+  facet_grid(~label, scales = "free_x", drop = TRUE) +
+  xlab("label - prediction") +
+  ggtitle("Label")
+```
+
+
+
+in environmental space
+```{r}
+df <- as.data.frame(cur_sce$mean_aggregatedExpression)
+
+df$id <- colnames(cur_sce)
+df$pred <- cur_sce$pred
+df$label <- cur_sce$label
+df$label_pred <- cur_sce$label_pred
+df$correct <- cur_sce$correct
+
+# compute mean expression value of correctly labeled cells per celltype
+label_mean <- df%>%
+  filter(correct == 1) %>%
+  group_by(label) %>%
+  summarise(across(where(is.numeric), ~ mean(.x, na.rm = TRUE))) %>%
+  select(-c(correct))
+
+df <- df%>%
+  left_join(label_mean, by = "label", suffix = c("_cell","_label"))
+
+label_mean <- label_mean %>%
+  rename_with(~ paste0(.x, "_pred"))
+
+df <- df %>%
+  left_join(label_mean, by = join_by("pred" == "label_pred"))
+
+
+distances_to_label <- c()
+distances_to_pred <- c()
+for (i in 1:nrow(df)){
+  cell <- df[i,] %>%
+    select(ends_with("_cell")) %>%
+    as.numeric()
+  
+  label <- df[i,] %>%
+    select(ends_with("_label")) %>%
+    as.numeric()
+  
+  pred <- df[i,] %>%
+    select(ends_with("_pred")) %>%
+    select(-c(label_pred)) %>%
+    as.numeric()
+    
+  
+  dist_to_label <- euclidean_dist(cell,label)
+  dist_to_pred <- euclidean_dist(cell,pred)
+  
+  distances_to_label <- c(distances_to_label, dist_to_label)
+  distances_to_pred <- c(distances_to_pred, dist_to_pred)
+}
+
+df$dist_to_label <- distances_to_label
+df$dist_to_pred <- distances_to_pred
+ 
+
+expression_similarity <- df %>%
+  filter(correct == 0) %>%
+  group_by(label_pred) %>%
+  summarise(label = unique(label), pred = unique(pred), dist_to_label = mean(dist_to_label), dist_to_pred = mean(dist_to_pred), n = n()) %>%
+  mutate(similarity = dist_to_label - dist_to_pred, similar_to_prediction = similarity > 0)
+
+
+ggplot(expression_similarity %>%
+         filter(n > 10), aes(x=reorder(label_pred, similarity), y=similarity, fill = similar_to_prediction)) +
+  geom_bar(stat='identity') +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  # coord_flip() +
+  facet_grid(~label, scales = "free_x", drop = TRUE) +
+  xlab("label - prediction") +
+  ggtitle("Label")
+
+```
+
+
+
+```{r, fig.height=15, fig.width=10}
+wrong_env <- sce[,(sce$pred != sce$label)  & (sce$label != "unlabelled")]
+correct_env <- sce[,(sce$pred == sce$label)  & (sce$label != "unlabelled")]
+# env_clusterd <- aggregateAcrossCells(wrong_env, wrong_env$label, statistics = "mean", use.assay.type = "exprs")
+
+# aggregate across cell types
+wrong_env_agg <- aggregateAcrossCells(wrong_env, wrong_env$label, statistics = "mean", use.assay.type = "mean_neighbor_expression")
+
+correct_env_agg <- aggregateAcrossCells(correct_env, correct_env$label, statistics = "mean", use.assay.type = "mean_neighbor_expression")
+
+
+dittoHeatmap(wrong_env, 
+             genes = rownames(wrong_env)[rowData(wrong_env)$use_channel],
+             assay = "mean_neighbor_expression", scale = "none",
+             heatmap.colors = viridis(100),
+             annot.by = c("label", "pred","Indication"),
+             order.by = "label")
+
+dittoHeatmap(correct_env, 
+             genes = rownames(correct_env)[rowData(correct_env)$use_channel],
+             assay = "mean_neighbor_expression", scale = "none",
+             heatmap.colors = viridis(100),
+             annot.by = c("label", "pred","Indication"),
+             order.by = "label")
+
+
+dittoHeatmap(wrong_env_agg, 
+             genes = rownames(wrong_env_agg)[rowData(wrong_env_agg)$use_channel],
+             assay = "mean_neighbor_expression", scale = "none",
+             heatmap.colors = viridis(100),
+             annot.by = c("label", "pred","Indication"),
+             order.by = "label")
+
+dittoHeatmap(correct_env_agg, 
+             genes = rownames(correct_env_agg)[rowData(correct_env_agg)$use_channel],
+             assay = "mean_neighbor_expression", scale = "none",
+             heatmap.colors = viridis(100),
+             annot.by = c("label", "pred","Indication"),
+             order.by = "label")
+```
+
+
+```{r}
+library(ComplexHeatmap)
+
+
+mural_mat <- as.data.frame(sce_mural$aggregatedNeighbors) %>%
+  mutate(label = sce_mural$label) %>%
+  group_by(label) %>%
+  summarise_all(mean) %>%
+  select(-c(unlabelled)) %>%
+  column_to_rownames("label") %>%
+  as.matrix()
+
+mural_mat <- t(t(mural_mat)/colSums(mural_mat))
+
+order <- rownames(mural_mat)
+mural_mat <- mural_mat[,order]
+
+Heatmap(mural_mat, col = viridis(100), cluster_rows = FALSE, cluster_columns = FALSE)
+
+```
+
+
+
+
+
+Predictions for unlabelled cells
+```{r}
+count_unlabelled <- table(results%>%
+        filter(label == "unlabelled")%>%
+        pull(pred))
+freq_unlabelled <- count_unlabelled / sum(count_unlabelled)
+count_cells <- table(results%>%
+                       filter(label != "unlabelled")%>%
+                       pull(label))
+freq_cells <- count_cells / sum(count_cells)
+
+m <- matrix(c(freq_unlabelled,freq_cells), nrow = 2, byrow=TRUE)
+colnames(m) <- names(freq_cells)
+rownames(m) <- c("unlabelled", "labels")
+
+
+Heatmap(m)
+```
 
 

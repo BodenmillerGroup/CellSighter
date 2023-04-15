@@ -1,7 +1,7 @@
 #!/bin/bash
 
 
-for i in {3..24}
+for i in {1..12}
 do
     bp="/mnt/immucan_volume/processed_data/Panel_1/CellSighter/ParamSweep2/Model_$i"
     if [ -d "$bp" ]; then

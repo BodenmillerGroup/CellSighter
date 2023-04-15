@@ -14,9 +14,10 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 
 val_results = []
+FPR_list = []
 
 # create list of all files in directory that have a val_results.csv
-base_path = "/Volumes/immucan_volume/processed_data/Panel_1/CellSighter/"
+base_path = "/Volumes/immucan_volume/processed_data/Panel_1/CellSighter/OVA"
 for path in os.listdir(base_path):
     if os.path.isfile(os.path.join(base_path, path, "val_results.csv")):
         val_results.append(os.path.join(base_path, path, "val_results.csv"))
@@ -46,6 +47,11 @@ for i, val_result in enumerate(val_results):
         curr_df["pred"] = [dic[x] for x in curr_df["pred"]]
         curr_df["label"] = [dic[x] for x in curr_df["label"]]
     
+    # compute FPR
+    values = curr_df["label"][(curr_df["pred"] == 1) & (curr_df["pred_prob"] >= 0.8)]
+    values = values[values != -1]
+    FPR = np.sum(values == 0)/len(values)
+    FPR_list.append(FPR)
     
     if df_all_labeled.empty:
         curr_df = curr_df[["image_id", "cell_id","unique_id","pred","pred_prob","label"]]
@@ -61,9 +67,14 @@ for i, val_result in enumerate(val_results):
 
 
 
+# Extract predictions
 # create prediciton and probability arrays
 predictions = df_all_labeled[[f"pred_{cell_name}" for cell_name in cell_names]].to_numpy()
 probability = df_all_labeled[[f"pred_prob_{cell_name}" for cell_name in cell_names]].to_numpy()
+
+# scale probability by FPR
+probability = probability-np.array(FPR_list)*0.05
+
 
 # extract prediciton with max probablity
 a = probability * predictions
@@ -71,7 +82,8 @@ final_pred = a.argmax(axis = 1)
 # set those without any prediciton to -1
 final_pred[np.logical_not(a.any(axis=1))] = -1
 
-# extract label
+
+# Extract label
 labels = []
 label_id = df_all_labeled[[f"label_{cell_name}" for cell_name in cell_names]].to_numpy()
 cell_names = np.array(cell_names)
@@ -83,19 +95,34 @@ for i in range(label_id.shape[0]):
         label = cell_names[boolean].item()
 
     labels.append(label)
-        
+    
+# Compute certainty metric
+loss_ones = np.copy(probability)
+loss_ones[predictions == 0] = 0
+for i in range(loss_ones.shape[0]):
+    loss_ones[i,final_pred[i]] = 0
 
-df_all_labeled["final_pred_id"] = final_pred
-df_all_labeled["final_pred_prob"] = a.max(axis = 1)
+loss_zeros = np.full(probability.shape,100.)
+loss_zeros[predictions == 1] = 0
+loss_zeros[predictions == 0] -= probability[predictions == 0]*100
+
+certainty = (np.full(probability.shape[0],1400) - np.sum((loss_zeros + loss_ones),axis=1))/1400
 
 # final prediction
 cell_names_dict = {}
 for i,cell_name in enumerate(cell_names):
     cell_names_dict[i] = cell_name
 
-# convert index to actual cell labels    
-df_all_labeled["final_pred"] = [cell_names_dict[x] if x in cell_names_dict.keys() else "undefined" for x in final_pred]
-df_all_labeled["label"] = labels
+
+results = pd.DataFrame()
+# create final dataframe  
+results["image_id"] = df_all_labeled["image_id"]
+results["cell_id"] = df_all_labeled["cell_id"]
+results["pred_prob"] = a.max(axis = 1)
+results["certainty"] = certainty
+results["final_pred"] = [cell_names_dict[x] if x in cell_names_dict.keys() else "undefined" for x in final_pred]
+results["label"] = labels
 
 
-df_all_labeled.to_csv("merged_ensemble.csv")
+# save results
+results.to_csv(os.path.join(base_path, "merged_results.csv"))

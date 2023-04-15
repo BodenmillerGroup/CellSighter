@@ -110,7 +110,7 @@ if __name__ == "__main__":
     model = Model(num_channels + 1, class_num)
 
     # limit number of threads
-    torch.set_num_threads(30)
+    # torch.set_num_threads(30)
     model = model.to(device=device)
     optimizer = torch.optim.Adam(model.parameters(), lr=config["lr"])
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.85)

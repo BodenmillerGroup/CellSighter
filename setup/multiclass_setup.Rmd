@@ -46,7 +46,7 @@ for (i in seq(1,10)){
             paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Input/"),
             # using information from param sweep analysis
             hierarchy_match = hm,
-            crop_input_size = 40,
+            crop_input_size = 20,
             epoch_max = 50,
             lr = 0.005,
             blacklist = c("DNA1","DNA2","HistoneH3"))

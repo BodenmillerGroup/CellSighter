@@ -61,7 +61,7 @@ crop_input_size <- c(19,30,40)
 
 epoch_max
 ```{r}
-epoch_max <- c(50,80)
+epoch_max <- c(50)
 ```
 
 lr

@@ -33,7 +33,9 @@ library(tidyverse)
 # load sce
 sce <- readRDS(paste0(mount_path,"immucan_volume/processed_data/Panel_1/cell_classification/sce_selected.rds"))
 
+# prepare sce
 sce$image <- sub(".tiff", "", sce$image)
+sce$unique_id <- paste0(sce$image,sce$ObjectNumber)
 
 # Read in masks
 masks <- readRDS(paste0(mount_path,"immucan_volume/processed_data/Panel_1/cell_classification/all_masks.rds"))
@@ -41,39 +43,36 @@ masks <- readRDS(paste0(mount_path,"immucan_volume/processed_data/Panel_1/cell_c
 # Read in images
 images <- readRDS(paste0(mount_path,"immucan_volume/processed_data/Panel_1/cell_classification/all_images.rds"))
 
+# read in results
+df <- read.csv(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Multiclass/merged_ensemble.csv"))
+df$X <- NULL
 ```
 
 
+
+```{r}
+# create dictionary for translation between cell type id and cell type label
+# create label to label-id dictionary, set unlabeled to -1
+dic <- c()
+labels <- sort(unique(sce$cell_labels))
+labels <- labels[labels != "unlabelled"]
+
+for (i in 1:length(labels)){
+  dic[as.character(i-1)] <- labels[[i]]
+}
+dic["-1"] <- "unlabelled"
+
+df$pred <- dic[as.character(df$pred)]
+df$label <- dic[as.character(df$label)]
+
+```
+
 normalize images
 ```{r normalize-1}
-# 
-# # create directory if necessary
-# if(!dir.exists(paste0(mount_path,"immucan_volume/processed_data/Panel_1/cell_classification/Rout/data"))){
-#   dir.create(paste0(mount_path,"immucan_volume/processed_data/Panel_1/cell_classification/Rout"))
-# }
-# 
-# for(i in c("BREAS", "THOR", "GI", "HN", "GU")){
-#   
-#   if (sum(mcols(all_images)$Indication == i) == 0) next
-#   
-#   cur_images <- all_images[mcols(all_images)$Indication == i]
-#   cur_masks <- all_masks[mcols(all_masks)$Indication == i]
-#   
-#   cur_images <- CytoImageList(cur_images, on_disk = FALSE)
-#   cur_masks <- CytoImageList(cur_masks, on_disk = FALSE)
-#   
-#   cur_images <- normalize(cur_images, separateImages = TRUE)
-#   cur_images <- normalize(cur_images, separateImages = TRUE, 
-#                         inputRange = c(0, 0.2))
-#   
-#   saveRDS(cur_images, paste0(mount_path, 
-#                             "processed_data/Panel_1/cell_classification/Rout/data/", 
-#                             i, "_norm_images.rds"))
-#   saveRDS(cur_masks, paste0(mount_path, 
-#                             "processed_data/Panel_1/", BATCH, "/Rout/data/", 
-#                             i, "_masks.rds"))
-#   gc()
-# }
+images <- normalize(images, separateImages = TRUE)
+images <- normalize(images, separateImages = TRUE,
+                      inputRange = c(0, 0.2))
+
 ```
 
 
@@ -100,88 +99,120 @@ markers[["Mural"]] <- c("SMA", "PDGFRb")
 markers[["Tumor"]] <- c("Ecad", "CarbonicAnhydrase")
 markers[["undefined"]] <- c("DNA1")
 
-# positivity <- vector(mode = "list", length = 5)
-# names(positivity) <- c("PD1_pos", "PDL1_pos", "Ki67_pos", "cleavedPARP_pos", "GrzB_pos")
-# 
-# positivity[["PD1_pos"]] <- c("PD1")
-# positivity[["PDL1_pos"]] <- c("PDL1")
-# positivity[["Ki67_pos"]] <- c("Ki67")
-# positivity[["cleavedPARP_pos"]] <- c("cleavedPARP")
-# positivity[["GrzB_pos"]] <- c("GrzB")
-# 
-# patches <- vector(mode = "list", length = 2)
-# names(patches) <- c("tumor_patches", "CD20_patches")
-# 
-# patches[["tumor_patches"]] <- c("Ecad", "CarbonicAnhydrase")
-# patches[["CD20_patches"]] <- c("CD20", "CD3")
 ```
 
-```{r viz-cell-types}
-# image_files <- list.files(paste0(mount_path, 
-#                       "processed_data/Panel_1/", BATCH, "/Rout/data"),
-#                       pattern = "_norm_images.rds",
-#                       full.names = TRUE)
-# mask_files <- list.files(paste0(mount_path, 
-#                       "processed_data/Panel_1/", BATCH, "/Rout/data"),
-#                       pattern = "_masks.rds",
-#                       full.names = TRUE)
 
-for(i in unique(sce$Indication)){
+```{r}
+for (cell_type in unique(df$label)){
+  if(cell_type == "unlabelled") next
+  correct_df <- df[(df$label == cell_type) & (df$pred == cell_type),]
+  wrong_df <- df[(df$label != cell_type & df$label != "unlabelled") & (df$pred == cell_type),]
+  correct_images <- names(sort(table(correct_df$image_id), decreasing = T))[1:10]
+  wrong_images <- names(sort(table(wrong_df$image_id), decreasing = T))[1:10]
   
-  if (sum(grepl(i, image_files)) == 0) next
+  # select masks and images
+  correct_mask <- masks[correct_images]
+  correct_images <- images[correct_images]
   
-  cur_images <- image_files[grepl(i, image_files)]
-  cur_images <- readRDS(cur_images)
-  cur_masks <- mask_files[grepl(i, mask_files)]
-  cur_masks <- readRDS(cur_masks)
- 
+  wrong_mask <- masks[wrong_images]
+  wrong_images <- images[wrong_images]
+  
+  correct_cells <- paste0(correct_df$image_id,correct_df$cell_id)
+  wrong_cells <- paste0(wrong_df$image_id,wrong_df$cell_id)
+  
+  # select cells in sce
+  correct_sce <- sce[,sce$unique_id %in% correct_cells]
+  wrong_sce <- sce[,sce$unique_id %in% wrong_cells]
+  
+  
+  cur_markers <- markers[[cell_type]]
+  
   # generate folders if they do not already exist 
-  if (! dir.exists(paste0(mount_path,"/processed_data/Panel_1/", BATCH, "/Rout/images/CellTypeValidation/",i,"/"))) {
-    dir.create(paste0(mount_path,"/processed_data/Panel_1/", BATCH, "/Rout/images/CellTypeValidation/",i,"/"), recursive = TRUE)
+  if (!dir.exists(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Multiclass/Validation/",cell_type))) {
+    dir.create(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Multiclass/Validation/",cell_type), recursive = TRUE)
   }
   
-  for(j in unique(sce$celltypes)){
-    cur_sce <- sce[,sce$celltypes == j & sce$Indication == i]
-    cur_markers <- markers[[j]]
   
-    # when only few images are present and a certain celltypes does not exist an empty cur_sce object is created which cannot be processed.
-    if(dim(cur_sce)[2] == 0) {
-      next
-    }
-    
-    if (length(cur_markers) == 1) {
+  if (length(cur_markers) == 1) {
       cur_col <- "red"
-      names(cur_col) <- j
+      names(cur_col) <- cell_type
       cur_col <- list(cur_col)
       names(cur_col) <- "celltypes"
-      plotPixels(image = cur_images, 
-                object = cur_sce, 
-                mask = cur_masks, 
+      # save correct
+      plotPixels(image = correct_images, 
+                object = correct_sce, 
+                mask = correct_mask, 
                 cell_id = "ObjectNumber",
                 img_id = "image", 
                 colour_by = cur_markers, 
-                outline_by = "celltypes",
-                image_title = list(text = names(cur_images),
+                outline_by = "cell_labels",
+                image_title = list(text = names(correct_images),
                                 cex = 1), 
                 colour = cur_col,
-                save_plot = list(filename = paste0(mount_path, 
-                            "/processed_data/Panel_1/", BATCH, "/Rout/images/CellTypeValidation/",
-                            i, "/", j, ".png")))
+                save_plot = list(filename = paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Multiclass/Validation/"
+                                                   ,cell_type,"/",cell_type,"_correct.png")))
+      # save wrong
+      plotPixels(image = wrong_images, 
+                object = wrong_sce, 
+                mask = wrong_mask, 
+                cell_id = "ObjectNumber",
+                img_id = "image", 
+                colour_by = cur_markers, 
+                outline_by = "cell_labels",
+                image_title = list(text = names(wrong_images),
+                                cex = 1), 
+                colour = cur_col,
+                save_plot = list(filename = paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Multiclass/Validation/"
+                                                   ,cell_type,"/",cell_type,"_wrong.png")))
     } else {
-        plotPixels(image = cur_images,
-                   object = cur_sce, 
-                   mask = cur_masks, 
-                   cell_id = "ObjectNumber",
-                   img_id = "image", 
-                   colour_by = cur_markers, 
-                   outline_by = "celltypes",
-                   image_title = list(text = names(cur_images),
-                                  cex = 1),
-                   save_plot = list(filename = paste0(mount_path, 
-                            "/processed_data/Panel_1/", BATCH, "/Rout/images/CellTypeValidation/",
-                            i, "/", j, ".png")))
+      # save correct
+        plotPixels(image = correct_images, 
+                object = correct_sce, 
+                mask = correct_mask, 
+                cell_id = "ObjectNumber",
+                img_id = "image", 
+                colour_by = cur_markers, 
+                outline_by = "cell_labels",
+                image_title = list(text = names(correct_images),
+                                cex = 1), 
+                save_plot = list(filename = paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Multiclass/Validation/"
+                                                   ,cell_type,"/",cell_type,"_correct.png")))
+      # save wrong
+      plotPixels(image = wrong_images, 
+                object = wrong_sce, 
+                mask = wrong_mask, 
+                cell_id = "ObjectNumber",
+                img_id = "image", 
+                colour_by = cur_markers, 
+                outline_by = "cell_labels",
+                image_title = list(text = names(wrong_images),
+                                cex = 1), 
+                save_plot = list(filename = paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Multiclass/Validation/"
+                                                   ,cell_type,"/",cell_type,"_wrong.png")))
     }
   }
-}
+  
+
 ```
 
+```{r}
+# quantify which cell are confused for which one
+library(viridis)
+
+df$unique_id <- paste0(df$image_id,df$cell_id)
+
+comb <- as.data.frame(merge(colData(sce),df, by="unique_id"))
+
+wrong <- comb[comb$cell_labels != comb$pred,] %>%
+  filter(cell_labels != "unlabelled")
+
+
+mat <- as.matrix(table(wrong$cell_labels,wrong$pred))
+col_func <- colorRamp2(breaks = c(0,max(mat)), colors = c("white","Red"))
+
+Heatmap(mat, col = viridis(100), row_title = "CellSIghter", column_title = "Cell Types",
+        heatmap_legend_param = list(
+          title = "Nr. Cells"))
+```
+
+# TODO: quantify if cell sighter is doing what supposed, ignoring spillover from surrounding cells

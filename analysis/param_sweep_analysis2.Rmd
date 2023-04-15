@@ -230,7 +230,7 @@ names(col_vec_val_set) = unique(hyperparams$val_set)
 col_vec_crop_input_size = brewer.pal(name = "Set2", n = length(unique(hyperparams$crop_input_size)))
 names(col_vec_crop_input_size) = unique(hyperparams$crop_input_size)
 
-col_vec_epoch_max = brewer.pal(name = "Set3", n = length(unique(hyperparams$epoch_max)))[1:2]
+col_vec_epoch_max = brewer.pal(name = "Set3", n = length(unique(hyperparams$epoch_max)))[1]
 names(col_vec_epoch_max) = unique(hyperparams$epoch_max)
 
 col_vec_lr = brewer.pal(name = "Accent", n = length(unique(hyperparams$lr)))[1:2]
