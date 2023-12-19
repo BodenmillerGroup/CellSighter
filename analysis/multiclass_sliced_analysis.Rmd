@@ -1,0 +1,173 @@
+---
+title: "multiclass classification ensemble analysis - with a subset of markers"
+output:
+  workflowr::wflow_html:
+    toc: false
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+
+# Set path
+if (Sys.info()["sysname"] == "Darwin"){
+  mount_path <- "/Volumes/"
+} else if (Sys.info()["sysname"] == "Linux"){
+  mount_path <- "/mnt/"
+} else {
+  stop("Operating system is not supported")
+}
+```
+
+
+load data
+```{r}
+sce <- readRDS(paste0(mount_path,"immucan_volume/processed_data/Panel_1/cell_classification/sce_selected.rds"))
+
+# import merged results created with unified_ensemble.py
+df <- read.csv(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Multiclass_sliced/merged_ensemble.csv"))
+df$X <- NULL
+```
+
+
+```{r}
+library(stringr)
+library(dplyr)
+library(tidyverse)
+# create unique cell id for all cells
+df$unique_id <- paste0(df$image_id, df$cell_id)
+sce$unique_id <- paste0(str_split(sce$image,".tiff", simplify = T)[,1],sce$ObjectNumber)
+
+# merge data with sce and sort
+results <- as.data.frame(colData(sce)) %>%
+  inner_join(df, by= intersect(colnames(df),colnames(colData(sce))))
+
+# create dictionary for translation between cell type id and cell type label
+# create label to label-id dictionary, set unlabeled to -1
+dic <- c()
+labels <- sort(unique(sce$cell_labels))
+labels <- labels[labels != "unlabelled"]
+
+for (i in 1:length(labels)){
+  dic[as.character(i-1)] <- labels[[i]]
+}
+dic["-1"] <- "unlabelled"
+
+results$pred <- dic[as.character(results$pred)]
+results$label <- dic[as.character(results$label)]
+
+# add results to sce
+sce <- sce[,sce$unique_id %in% results$unique_id]
+
+for (feature in colnames(results)){
+  if (!feature %in% colnames(colData(sce))){
+    colData(sce)[,feature] <- results[,feature]
+  }
+}
+```
+
+Confusion matrix
+```{r, fig.height=12,fig.width=12}
+library(caret)
+
+
+
+
+cm <- confusionMatrix(as.factor(results$pred), as.factor(results$label),
+                mode = "everything")
+
+data.frame(cm$byClass) %>%
+    mutate(class = sub("Class: ", "", rownames(cm$byClass))) %>%
+    ggplot() + 
+    geom_point(aes(1 - Specificity, Sensitivity, 
+                   size = Detection.Rate,
+                   fill = class),
+               shape = 21) + 
+    scale_fill_manual(values = metadata(sce)$colour_vectors$cell_types) + 
+    theme_bw() +
+    theme(text = element_text(size = 10)) +
+    ylab("Sensitivity (TPR)") +
+    xlab("1 - Specificity (FPR)")
+
+conf_matrix <- t(t(cm$table)/colSums(cm$table))
+f1_scores <- cm$byClass[,"F1"]
+```
+
+
+```{r}
+library(ComplexHeatmap)
+library(circlize)
+library(viridis)
+
+
+col_fun = colorRamp2(c(0,1), c("white","red"))
+col_anno <- columnAnnotation(f1 = f1_scores, col = list(f1 = col_fun),
+                             F1 = anno_text(sprintf("%.2f", f1_scores), location = 0.5, just = "center",rot = 0, gp = gpar(fontsize = 10)))
+
+hm <- Heatmap(conf_matrix, col = viridis(100),
+              column_title = "Label",
+              row_title = "CellSighter",
+              cluster_rows = F,
+              cluster_columns = F,
+              bottom_annotation = col_anno,
+              column_names_side = "top",
+              heatmap_legend_param = list(at = c(0,0.2,0.4,0.6,0.8,1)),
+              show_heatmap_legend = F,
+              #column_title = dimnames(conf_matrix)[[3]][i],
+              cell_fun = function(j, i, x, y, width, height, fill){
+                grid.text(sprintf("%.2f", conf_matrix[i, j]), x, y, gp = gpar(fontsize = 10))})
+
+hm
+```
+
+Individual model analysis
+```{r}
+# load results
+per_model <- lapply(list.dirs(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Multiclass_sliced/")),function(x){
+  if(file.exists(paste0(x,"/val_results.csv"))){
+    output <- str_extract(x,"Model_[0-9]{1,2}")
+    df <- read.csv(paste0(x,"/val_results.csv"))
+    df$Output_name <- rep(output,nrow(df))
+    df <- df[,-c(1)]
+    return (df)
+    }
+  }
+)
+
+per_model <- bind_rows(per_model)
+per_model$label <- as.character(per_model$label)
+per_model$pred <- dic[as.character(per_model$pred)]
+per_model$label <- dic[as.character(per_model$label)]
+```
+
+```{r}
+cm_list <- lapply(unique(per_model$Output_name), function(model){
+  df <- per_model[per_model$Output_name == model,]
+  cm <- confusionMatrix(as.factor(df$pred), as.factor(df$label),
+                mode = "everything")
+  
+  cm_df <- data.frame(cm$byClass) %>%
+    mutate(Output_name = rep(model,nrow(cm$byClass))) %>%
+    mutate(class = sub("Class: ", "", rownames(cm$byClass)))
+  return (cm_df)
+})
+
+cm_df <- bind_rows(cm_list)
+  
+  
+cm_df%>%
+  filter(class != "unlabelled") %>%
+  ggplot() + 
+  geom_point(aes(1 - Specificity, Sensitivity, 
+                 size = Detection.Rate,
+                 fill = class),
+             shape = 21) + 
+  scale_fill_manual(values = metadata(sce)$colour_vectors$cell_types) + 
+  theme_bw() +
+  facet_wrap(~Output_name) +
+  ylab("Sensitivity (TPR)") +
+  xlab("1 - Specificity (FPR)")
+```
+

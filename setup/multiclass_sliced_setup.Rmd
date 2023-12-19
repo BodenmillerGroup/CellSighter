@@ -1,0 +1,64 @@
+---
+title: "Prepare Input for ensemble"
+output:
+  workflowr::wflow_html:
+    toc: false
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+
+# Set path
+if (Sys.info()["sysname"] == "Darwin"){
+  mount_path <- "/Volumes/"
+} else if (Sys.info()["sysname"] == "Linux"){
+  mount_path <- "/mnt/"
+} else {
+  stop("Operating system is not supported")
+}
+```
+
+```{r}
+source("code/function_cells2labels.R")
+source("code/function_save2tiff.R")
+source("code/function_data2config.R")
+```
+
+
+Create 10 models to replicate CellSighter Paper
+```{r}
+not_included <- c("HistoneH3", "CD16", "CD27", "CD45RA", "B2M", "CD68", "Ido1", "LAG3", "PD1", "GrzB", "PDL1", "TCF7", "CD45RO", "ICOS", "CD33", "Ki67", "VISTA", "CD40", "CD14", "CD206", "cleavedPARP", "DNA1", "DNA2")
+included <- c("MPO", "SMA", "CD38", "HLADR", "CD15", "CD163", "CD20", "CD3", "CD11c", "PDGFRb", "CD7", "FOXP3", "CD8a", "CarbonicAnhydrase", "CD4", "Ecad", "CD303")
+
+if(!dir.exists(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Multiclass_sliced"))){
+    dir.create(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Multiclass_sliced"))
+  }
+
+hm1 <- c("0"="Immune", "1"="Immune", "2"="Immune", "3"="Immune", "4"="Immune", "5"="Immune", "6"="Immune", "7"="Other", "8"="Immune", "9"="Immune", "10"="Immune", "11"="Immune", "12"="Immune", "13"="Other", "-1"="Other")
+
+hm2 <- c("0"="B", "1"="B", "2"="T", "3"="T", "4"="Myeloid", "5"="Myeloid", "6"="Myeloid", "7"="Other", "8"="Myeloid", "9"="T", "10"="Myeloid", "11"="B", "12"="T", "13"="Tumor", "-1"="Other")
+
+hm_list <- list(hm1,hm2)
+
+for (i in seq(1,10)){
+  if(!dir.exists(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Multiclass_sliced/Model_",i))){
+    dir.create(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Multiclass_sliced/Model_",i))
+  }
+  
+  hm <- hm_list[[i%%2 + 1]]
+  
+  data2config(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Multiclass_sliced/Model_",i,"/"),
+            # use data prepared by prepare_input_data.Rmd
+            paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Input/"),
+            # using information from param sweep analysis
+            hierarchy_match = hm,
+            crop_input_size = 20,
+            epoch_max = 50,
+            lr = 0.005,
+            blacklist = not_included)
+}
+
+```

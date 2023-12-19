@@ -53,6 +53,5 @@ cells2labels(paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighte
 create config.json file
 ```{r}
 data2config("./code/",paste0(mount_path,"immucan_volume/processed_data/Panel_1/CellSighter/Input/"),blacklist = c("DNA1,DNA2,HistoneH3"))
-
 ```
 

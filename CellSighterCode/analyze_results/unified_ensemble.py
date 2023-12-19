@@ -1,15 +1,15 @@
 import pandas as pd
 
-val_results = ["/Volumes/immucan_volume/processed_data/Panel_1/CellSighter/Multiclass/Model_1/val_results.csv",
-               "/Volumes/immucan_volume/processed_data/Panel_1/CellSighter/Multiclass/Model_2/val_results.csv",
-                "/Volumes/immucan_volume/processed_data/Panel_1/CellSighter/Multiclass/Model_3/val_results.csv",
-                "/Volumes/immucan_volume/processed_data/Panel_1/CellSighter/Multiclass/Model_4/val_results.csv",
-                "/Volumes/immucan_volume/processed_data/Panel_1/CellSighter/Multiclass/Model_5/val_results.csv",
-                "/Volumes/immucan_volume/processed_data/Panel_1/CellSighter/Multiclass/Model_6/val_results.csv",
-                "/Volumes/immucan_volume/processed_data/Panel_1/CellSighter/Multiclass/Model_7/val_results.csv",
-                "/Volumes/immucan_volume/processed_data/Panel_1/CellSighter/Multiclass/Model_8/val_results.csv",
-                "/Volumes/immucan_volume/processed_data/Panel_1/CellSighter/Multiclass/Model_9/val_results.csv",
-                "/Volumes/immucan_volume/processed_data/Panel_1/CellSighter/Multiclass/Model_10/val_results.csv"] #Fill here the paths to all of yours val_results.csv files you got from the training/validation
+val_results = ["/Volumes/immucan_volume/processed_data/Panel_1/CellSighter/Multiclass_sliced/Model_1/val_results.csv",
+               "/Volumes/immucan_volume/processed_data/Panel_1/CellSighter/Multiclass_sliced/Model_2/val_results.csv",
+                "/Volumes/immucan_volume/processed_data/Panel_1/CellSighter/Multiclass_sliced/Model_3/val_results.csv",
+                "/Volumes/immucan_volume/processed_data/Panel_1/CellSighter/Multiclass_sliced/Model_4/val_results.csv",
+                "/Volumes/immucan_volume/processed_data/Panel_1/CellSighter/Multiclass_sliced/Model_5/val_results.csv",
+                "/Volumes/immucan_volume/processed_data/Panel_1/CellSighter/Multiclass_sliced/Model_6/val_results.csv",
+                "/Volumes/immucan_volume/processed_data/Panel_1/CellSighter/Multiclass_sliced/Model_7/val_results.csv",
+                "/Volumes/immucan_volume/processed_data/Panel_1/CellSighter/Multiclass_sliced/Model_8/val_results.csv"]
+                # "/Volumes/immucan_volume/processed_data/Panel_1/CellSighter/Multiclass_sliced/Model_9/val_results.csv",
+                # "/Volumes/immucan_volume/processed_data/Panel_1/CellSighter/Multiclass_sliced/Model_10/val_results.csv"] #Fill here the paths to all of yours val_results.csv files you got from the training/validation
 
 df_all_labeled = pd.DataFrame()
 ensemble_size = len(val_results)
@@ -31,4 +31,4 @@ df_all_labeled["label"] = df_all_labeled["label_ens_1"]
 df_all_labeled["cell_id"] = df_all_labeled["cell_id_ens_1"]
 df_all_labeled["image_id"] = df_all_labeled["image_id_ens_1"]
 
-df_all_labeled[["image_id", "cell_id", "label", "pred", "pred_prob"]].to_csv("/Volumes/immucan_volume/processed_data/Panel_1/CellSighter/Multiclass/merged_ensemble.csv")
+df_all_labeled[["image_id", "cell_id", "label", "pred", "pred_prob"]].to_csv("/Volumes/immucan_volume/processed_data/Panel_1/CellSighter/Multiclass_sliced/merged_ensemble.csv")
